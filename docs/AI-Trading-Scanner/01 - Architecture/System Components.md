@@ -1,6 +1,6 @@
 # Backend architecture
 
-Status: mostly design specification. Phase 1 implements only domain identities, execution dimensions, configuration validation and local health boundaries. Parent: [[01 - Architecture/System Architecture]]. Other proposed module names remain documentation, not created packages.
+Status: mostly design specification. Phase 1 implements domain identities, execution dimensions, configuration validation and local health boundaries. Phase 2 implements the offline historical `market_data` models, XNYS calendar, provenance/content identity, quality validation, fixtures and causal reader. Parent: [[01 - Architecture/System Architecture]]. Other proposed module names remain documentation, not created packages.
 
 ## Ownership and dependency direction
 

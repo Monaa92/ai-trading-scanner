@@ -1,6 +1,6 @@
 # Conceptual data model
 
-Specification only: no schema DDL or migrations. PostgreSQL is intended for transactional records and metadata; large immutable dataset artifacts may later live in private object/file storage referenced by checksum. Hosting, retention sizes and physical partitioning await measured data volume. See [[07 - Operations/Configuration]] and [[07 - Operations/Logging & Observability]].
+The persistence schema remains a specification: no DDL, database or migrations exist. Phase 2 implements only in-memory Python `Instrument`, `HistoricalBar`, `DataProvenance`, `CanonicalDataset`, quality-result and causal-slice records plus typed `InstrumentId`/`DatasetId`. PostgreSQL is intended for later transactional records and metadata; large immutable dataset artifacts may later live in private object/file storage referenced by checksum. Hosting, retention sizes and physical partitioning await measured data volume. See [[01 - Architecture/Market Data]], [[07 - Operations/Configuration]] and [[07 - Operations/Logging & Observability]].
 
 ## Common conventions
 

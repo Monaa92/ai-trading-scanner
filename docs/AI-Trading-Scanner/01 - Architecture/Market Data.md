@@ -1,6 +1,20 @@
 # Market data and time
 
-Status: FIXED ENGINEERING RULES with explicitly provisional provider assumptions. No provider integration or canonical snapshot implementation exists. See [[08 - Research/External References]], [[02 - Agents & Strategies/Shared Agent Rules/Indicators]], [[01 - Architecture/Scanner]] and [[06 - Testing/Backtesting]].
+Status: Phase 2 canonical historical-data foundation **IMPLEMENTED**; provider ingestion, normalized intelligence snapshots, persisted revisions, aggregation and the full replay engine remain **PLANNED**. See [[08 - Research/External References]], [[02 - Agents & Strategies/Shared Agent Rules/Indicators]], [[01 - Architecture/Scanner]] and [[06 - Testing/Backtesting]].
+
+## Implemented Phase 2 boundary
+
+`src/ai_trading_scanner/market_data` implements immutable Pydantic records for instruments, half-open OHLCV bars and provenance. It supports only `1m`, `5m`, `15m` and `60m`. Each bar binds `InstrumentId`, versioned session ID, timeframe, UTC `start_at`/`end_at`, exact `Decimal` OHLCV, currency, optional source record, `received_at`, `available_at`, `ingested_at` and ACTUAL/MODELED availability. Naive timestamps, binary floats, invalid price/volume relationships, mismatched intervals and impossible timestamp ordering fail validation. Derived values must live in separate records.
+
+`UsEquitiesCalendar` is the project-owned boundary over exactly pinned `exchange-calendars==4.13.2`. It resolves XNYS regular sessions using `America/New_York`, including DST, weekends, holidays and early closes, while returning UTC boundaries and a calendar-versioned local-date session ID. This local reference-data dependency is used because a handwritten weekday/holiday table would be fragile. It makes no network request. Other venue calendars can later implement a separate boundary; no 24×7 crypto calendar exists.
+
+`DatasetValidator` currently validates one instrument/timeframe series. It retains every schema-valid supplied record in the result and reports structured findings. Invalid OHLC/volume/timezone/malformed records, duplicates, out-of-order rows, mixed instruments/timeframes and observations outside or mismatched to a session are fatal. Missing in-session intervals and excessive availability delay are warnings. A missing interval is reported and never synthesized; weekends, holidays and closed periods are excluded from expected intervals.
+
+`DataProvenance` records provider, optional source dataset/version and universe reference, timeframe/source timezone, requested and actual coverage, ingestion time, explicit adjustment method, schema, availability mode/delay, calendar/normalizer versions, quality status, missing intervals and optional source checksum. Unknown provider details remain `None`; provider-defined adjustment requires a description. `CanonicalDataset.create` requires data, rejects fatal sequence findings and mismatched timeframe/availability policy, and requires detected warnings/missing intervals to match WARN provenance rather than disappear. For modeled availability, every bar must respect at least the declared delay.
+
+Dataset identity is `sha256:` plus a SHA-256 hash over canonical JSON containing all provenance fields and bars ordered by instrument/start/timeframe. UTC uses a `Z` representation and decimals use exact base-10 strings. Input ordering does not affect identity. Observation, adjustment, availability, coverage, quality, calendar, normalization or ingestion-vintage changes do. The ID does not include itself or runtime object layout.
+
+`CausalBarReader.slice_as_of` returns a frozen slice containing only records with `available_at <= as_of`, optionally restricted to instrument IDs. The slice has the source dataset ID and its own content hash, so four future agents can receive equivalent eligible information. The reader is not a replay scheduler or a normalized Market Intelligence snapshot and provides no strategy or trading behavior.
 
 ## Provider separation and canonical snapshot
 

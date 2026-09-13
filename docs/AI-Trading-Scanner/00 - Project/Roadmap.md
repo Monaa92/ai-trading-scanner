@@ -1,12 +1,12 @@
 # Gated roadmap
 
-Phase 1 offline foundation is complete. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task. Keep the original sequence with explicit subphases for the multi-agent extension.
+Phase 1 and the Phase 2 historical-data foundation are implemented. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task. Keep the original sequence with explicit subphases for the multi-agent extension.
 
 | Phase | Deliverable | Exit criterion |
 | --- | --- | --- |
 | 0 | Governance/architecture and multi-agent specifications | Coherent rules, ADRs, isolation/approval/safety/capital contracts, open assumptions |
 | 1 | Offline Python/FastAPI foundation | Verified/pinned runtime, package/lock/test layout, typed config/identity/data-run/environment/submission/approval validation and minimal health boundary; LIVE disabled and no execution |
-| 2 | Historical data/calendar/quality | Immutable raw provenance, available-at semantics, revisions and audited dataset fixtures |
+| 2 | Historical data/calendar/quality — IMPLEMENTED | Immutable canonical records, provenance, available-at semantics, XNYS sessions, quality findings, deterministic dataset identity and audited synthetic fixtures. Provider ingestion, persisted revisions and real datasets remain later work. |
 | 3 | Deterministic indicators | Seeds/session/gaps and prefix-invariance fixtures pass |
 | 4 | Strategy and proposal contracts | Registered unoptimized baseline parameters, four independent strategy profiles, first-class NO_TRADE, model/profile independence and agent-scoped pure evaluations/dedup; no order submission |
 | 5 | Risk/allocation/safety | Decimal sizing, parent+agent atomic reservations, scoped locks and ownership/approval contract tests independently reviewed |
@@ -29,4 +29,4 @@ Phase 1 offline foundation is complete. A roadmap authorizes no implementation, 
 
 Autonomous paper experiments are controlled research after historical/paper validation. They do not advance operational live autonomy. The four profile names are hypotheses, not permission to invent missing parameters or activate unvalidated management. A deterministic-only program can skip AI phases, documenting that choice, then validate manual operation. Core accounting/audit/statistics begin before research, not postponed to Phase 10.
 
-Exact next milestone: **Phase 2 historical data/calendar/quality foundation only**. Define and implement immutable market-data records, provenance, exchange-calendar/session semantics, availability timestamps, quality flags and small deterministic offline fixtures. Do not add strategy evaluation, risk, allocation, broker connections, order execution, AI calls, UI or deployment in that milestone.
+Exact next milestone: **Phase 3 deterministic indicators only**. Implement the registered session-aware VWAP/EMA/RSI/ATR calculations, explicit warm-up/gap behavior and prefix-invariance fixtures using causal Phase 2 slices. Do not add strategy evaluation, risk, allocation, broker connections, order execution, AI calls, UI or deployment.

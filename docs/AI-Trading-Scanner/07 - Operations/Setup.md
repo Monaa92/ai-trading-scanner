@@ -14,9 +14,10 @@ Recorded 2026-09-13. Separate observed facts from user-reported facts and intend
 | Codex CLI successfully started here | User-reported setup fact in initial brief; not independently rerun/verified in this pass |
 | Phase 1 runtime | CPython 3.13.15, pinned by `.python-version` and `requires-python`; installed and managed by uv 0.12.13 |
 | Phase 1 dependencies | Exact direct versions in `pyproject.toml`; complete transitive resolution committed in `uv.lock` |
+| Phase 2 calendar | Project boundary over exactly pinned `exchange-calendars==4.13.2`; local XNYS calendar data, no provider credentials or runtime download |
 | Initial Git state | `main` tracking `origin/main`, initial commit `5065408`, tracked README/.gitignore; existing `docs/` untracked and nine Markdown stubs empty |
 
-The initial repository had no production code, package manifest, tests or migrations. Phase 1 now adds only the offline executable foundation under `src/`, its tests, package metadata and lockfile. Existing Obsidian app/appearance/core-plugins/workspace JSON remains preserved. No duplicate vault exists and no active link or configuration points to the former vault path.
+The initial repository had no production code, package manifest, tests or migrations. Phase 1 added the offline executable safety foundation; Phase 2 adds only historical market-data records, calendar/session semantics, provenance, content identity, quality validation, fixtures and causal reads. No provider adapter, data download, database, indicators or trading component exists. Existing Obsidian app/appearance/core-plugins/workspace JSON remains preserved. No duplicate vault exists and no active link or configuration points to the former vault path.
 
 Still absent/unverified: PostgreSQL, Supabase, brokers, credentials, market-data subscriptions, Vercel and every trading subsystem. Graphify `graphifyy` v0.9.56 and its CLI help were verified outside the restricted sandbox. No repository Graphify config or generated output exists. No secret was requested or recorded.
 
@@ -28,7 +29,9 @@ Install Git and uv, clone the repository, then run:
 uv sync --locked --all-groups
 uv run --locked pytest
 uv run --locked ruff check .
+uv run --locked ruff format --check .
 uv run --locked mypy
+uv build
 uv run --locked ai-trading-scanner health
 ```
 

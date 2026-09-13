@@ -65,3 +65,11 @@ class ModelId(Identifier):
 
 class ConfigurationVersionId(Identifier):
     """Identity of a versioned resolved configuration."""
+
+
+class InstrumentId(Identifier):
+    """Identity of a canonical tradable instrument."""
+
+
+class DatasetId(Identifier):
+    """Content-derived identity of an immutable market-data dataset."""

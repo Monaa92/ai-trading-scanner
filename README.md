@@ -2,9 +2,10 @@
 
 Private research project investigating a systematic AI-assisted intraday scanner through deterministic rules, risk controls, realistic backtesting and eventual paper validation. Profitability is unproven; negative results are retained.
 
-Current state: Phase 1 offline foundation implemented. The repository contains typed identities,
-independent execution dimensions, fail-closed startup configuration, deterministic offline tests and
-a local health boundary. No scanner, strategy, broker, AI, portfolio or order execution exists.
+Current state: Phase 2 historical-data foundation implemented. In addition to the Phase 1 safety
+boundary, the repository contains immutable canonical OHLCV bars, provenance and content identity,
+an XNYS session calendar, structured quality validation, synthetic fixtures and causal as-of reads.
+No scanner, strategy, broker, AI, portfolio or order execution exists.
 
 - [Project rules](docs/PROJECT_RULES.md) — authoritative governance.
 - [Agent instructions](AGENTS.md) — required entry point for future agents.
@@ -17,7 +18,7 @@ Initial scope: long-only US equities/ETFs, 5-minute trend-pullback hypothesis, E
 
 Architecture extension: independently configured trading agents, isolated capital, broker-agnostic execution, four strategy profiles, capital-efficiency and AI-cost accounting, frozen autonomous experiments, recovery and derived performance reporting. EUR50 is an initial virtual-capital profile, not an engine or API-budget limit. These trading capabilities remain specifications.
 
-## Phase 1 local setup
+## Local setup
 
 Install [uv](https://docs.astral.sh/uv/), then run:
 

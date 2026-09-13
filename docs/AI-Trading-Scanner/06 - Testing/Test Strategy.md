@@ -1,8 +1,10 @@
 # Testing strategy
 
-Status: Phase 1 pytest suite IMPLEMENTED for identities, execution dimensions, startup safety and health. Later trading, property, integration, replay and frontend tests below remain required future work. See [PROJECT_RULES](../../PROJECT_RULES.md) for merge gates.
+Status: Phase 1 and Phase 2 offline pytest suites **IMPLEMENTED** for identities, execution dimensions, startup safety, health and historical-data semantics. Later indicators, trading, property, integration, full replay and frontend tests remain required future work. See [PROJECT_RULES](../../PROJECT_RULES.md) for merge gates.
 
-Phase 1 verification uses `uv run --locked pytest`, `uv run --locked ruff check .` and `uv run --locked mypy`. The initial suite has 111 deterministic offline tests and covers valid/malformed IDs, exact enum rejection, dimension independence, PAPER + FULL_AUTO representation, safe defaults, forbidden authority fields, disabled capability switches, redacted validation errors, non-fallback LIVE failure, CLI exit behavior and the in-memory FastAPI health route. It does not test trading behavior because none exists.
+The initial 111 Phase 1 cases remain regression coverage for valid/malformed IDs, exact enum rejection, dimension independence, PAPER + FULL_AUTO representation, safe defaults, forbidden authority fields, disabled capability switches, redacted validation errors, non-fallback LIVE failure, CLI exit behavior and the in-memory FastAPI health route.
+
+Phase 2 adds 60 collected cases, including expanded `InstrumentId`/`DatasetId` validation. They exercise immutable and decimal-safe bars; half-open/timezone-aware timestamps; actual/modeled availability; session identity; regular, DST, weekend, holiday and early-close behavior; invalid and missing observations; structured severity; dataset hash determinism and sensitivity; modeled-delay enforcement; and causal visibility/equivalent four-consumer slices. Tests use tiny synthetic records and locally packaged calendar data. The suite patches socket connection creation during CLI health to detect unintended network use. No trading behavior is claimed because none exists.
 
 ## Required evidence layers
 

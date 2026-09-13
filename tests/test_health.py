@@ -33,6 +33,9 @@ def test_health_cli_succeeds_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     assert report["live_enabled"] is False
     assert report["broker_connections_enabled"] is False
     assert report["external_services_required"] is False
+    assert report["market_data_schema_available"] is True
+    assert report["xnys_calendar_available"] is True
+    assert report["synthetic_fixture_validated"] is True
     assert secret_marker not in output.getvalue()
 
 

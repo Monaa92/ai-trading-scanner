@@ -17,7 +17,7 @@ No single local computer or generated dashboard may be the sole copy of critical
 
 ## Consequences
 
-Current source, documentation, Phase 1 package, lockfile and tests are protected on `origin/main`; future authoritative telemetry remains the durability gap. No paid service is introduced. Full readiness waits for a selected experiment store and tested restore.
+Phase 1 source and documentation are protected on `origin/main`. The Phase 2 package, lockfile, tests and synthetic fixtures become protected only after required review and a verified push; future authoritative external market data and experiment telemetry remain the longer-term durability gap. No paid service is introduced. Full readiness waits for a selected experiment store and tested restore.
 
 ## Alternatives considered
 

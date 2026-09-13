@@ -1,6 +1,6 @@
 # AI Trading Scanner
 
-Architecture baseline: 2026-09-13. Phase 1 adds only an executable offline foundation. Purpose: test whether the strategy works, not prove that it works. No trading system, accepted strategy or performance evidence exists yet.
+Architecture baseline: 2026-09-13. Phases 1 and 2 provide an executable offline configuration and historical-data foundation. Purpose: test whether the strategy works, not prove that it works. No trading system, accepted strategy or performance evidence exists yet.
 
 Read [PROJECT_RULES](../../PROJECT_RULES.md) first. This folder is the Obsidian vault. Notes use the numbered project hierarchy; valid local Obsidian settings are preserved.
 
@@ -31,4 +31,4 @@ The vault folder was renamed in place to `AI-Trading-Scanner`; all 79 pre-rename
 
 ## Executable foundation
 
-Phase 1 implements Python 3.13.15 packaging, validated opaque IDs, the five independent execution dimensions, a bundled fail-closed configuration and local CLI/FastAPI health reporting. Startup rejects LIVE, ORDER_ENABLED and experiment execution. PAPER + FULL_AUTO remains representable in the domain/configuration model while paper order submission remains disabled. See [[07 - Operations/Setup]], [[07 - Operations/Configuration]] and [[06 - Testing/Test Strategy]].
+Phase 1 implements Python 3.13.15 packaging, validated opaque IDs, the five independent execution dimensions, a bundled fail-closed configuration and local CLI/FastAPI health reporting. Phase 2 adds immutable canonical OHLCV bars, explicit UTC/event/receipt/availability/ingestion semantics, a pinned local XNYS calendar, provenance, quality findings, deterministic dataset hashing, synthetic fixtures and a causal as-of reader. Startup still rejects LIVE, ORDER_ENABLED and experiment execution. PAPER + FULL_AUTO remains representable while paper order submission remains disabled. See [[01 - Architecture/Market Data]], [[07 - Operations/Setup]], [[07 - Operations/Configuration]] and [[06 - Testing/Test Strategy]].
