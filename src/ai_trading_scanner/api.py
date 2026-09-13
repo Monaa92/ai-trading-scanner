@@ -13,7 +13,7 @@ def create_app(settings: FoundationConfig | None = None) -> FastAPI:
     api = FastAPI(
         title="AI Trading Scanner",
         version=__version__,
-        description="Phase 1 offline foundation; no trading or external integrations.",
+        description="Phase 2 historical-data foundation; no trading or external integrations.",
     )
 
     @api.get("/health", response_model=HealthReport)

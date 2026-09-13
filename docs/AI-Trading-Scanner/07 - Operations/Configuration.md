@@ -1,6 +1,6 @@
 # Configuration and version manifests
 
-Status: Phase 1 foundation configuration IMPLEMENTED; strategy, risk, data, costs, broker and experiment manifests remain specifications. Configuration is data and remains separately versioned from code.
+Status: Phase 1 startup configuration and Phase 2 per-dataset provenance/availability configuration are IMPLEMENTED; strategy, risk, full run-data, costs, broker and experiment manifests remain specifications. Configuration is data and remains separately versioned from code.
 
 | Namespace | Required contents | Classification |
 | --- | --- | --- |
@@ -36,3 +36,7 @@ Frozen manifests bind exact participant hashes and adaptive algorithm bounds; ag
 The bundled `phase1-v1` TOML artifact contains a configuration-version ID, the five execution dimensions and explicit disabled-capability fields. Pydantic rejects unknown keys, missing required fields, malformed IDs, unknown enum values, LIVE startup, ORDER_ENABLED startup, experiment execution and any attempt to set LIVE, paper orders, broker connections, external service calls or AI inference to true. Errors identify fields without printing submitted values. No environment variable supplies hidden behavior or credentials.
 
 The safe default is `HISTORICAL_REPLAY + SIMULATION + SIGNAL_ONLY + MANUAL_APPROVAL + NORMAL`. EUR50, trading capital, risk thresholds, broker selection and AI budget are absent because Phase 1 does not implement those systems. Run `uv run --locked ai-trading-scanner health` to validate the bundled configuration or pass `--config PATH` to validate another Phase 1 TOML file without fallback.
+
+## Implemented Phase 2 dataset configuration
+
+Each `DataProvenance` value binds timeframe, source timezone, ACTUAL or MODELED availability, explicit nonnegative modeled delay when applicable, adjustment method, calendar version, normalization version and optional source/coverage/quality facts. It is part of the dataset content hash. This is an in-memory validated artifact, not the complete run manifest or provider-ingestion configuration described above.

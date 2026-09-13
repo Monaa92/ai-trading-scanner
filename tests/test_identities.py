@@ -6,7 +6,9 @@ from ai_trading_scanner.domain import (
     AgentId,
     AllocationId,
     ConfigurationVersionId,
+    DatasetId,
     ExperimentId,
+    InstrumentId,
     ModelId,
     StrategyId,
 )
@@ -19,6 +21,8 @@ IDENTITY_TYPES = (
     StrategyId,
     ModelId,
     ConfigurationVersionId,
+    InstrumentId,
+    DatasetId,
 )
 
 
