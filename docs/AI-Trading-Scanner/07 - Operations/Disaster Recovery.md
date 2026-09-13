@@ -6,7 +6,7 @@ Status: **PARTIAL**. The architecture, governance and human-readable vault are p
 
 | State | Current classification | Recovery treatment |
 | --- | --- | --- |
-| Source/governance, package/tests/lockfile, `AGENTS.md`, `README.md`, `docs/PROJECT_RULES.md` and vault Markdown | Phase 1 is protected on `origin/main`; the Phase 2 candidate remains local until independent review and a verified push | After that push, clone from GitHub and run the locked setup below. |
+| Source/governance, Phase 1–2 package/tests/lockfile, `AGENTS.md`, `README.md`, `docs/PROJECT_RULES.md` and vault Markdown | Protected on `origin/main` after the approved Phase 2 merge | Clone from GitHub and run the locked setup below. |
 | Stable vault settings: `.obsidian/app.json`, `appearance.json`, `core-plugins.json`, `graph.json` | Protected with the vault | Restore with the clone; these contain no credentials. |
 | `.obsidian/workspace.json` and local UI/session state | Intentionally ignored; safe to lose/regenerable | Obsidian recreates it; project knowledge does not depend on it. |
 | Generated performance notes/charts | Regenerable by design; none exist | Rebuild from authoritative experiment data, never treat charts as the only evidence. |
@@ -29,4 +29,4 @@ Pre-commit classification covered every untracked file: 101 vault Markdown notes
 8. Verify all internal links, dataset identities, ledger/run manifests, Graphify integration and dashboard regeneration.
 9. Keep PAPER/LIVE disabled until their independent readiness gates and owner decisions.
 
-A fresh clone currently reconstructs the non-secret architecture, governance, Phase 1 executable and important Obsidian knowledge. It will reconstruct the Phase 2 code/tests/synthetic fixtures only after required review and a verified push. Full disaster-recovery readiness still cannot be claimed: the phase that first creates authoritative external market or experiment data must choose a durable backup target and tested restore procedure without introducing a paid service by default.
+A fresh clone reconstructs the non-secret architecture, governance, Phase 1–2 executable foundation, synthetic fixtures and important Obsidian knowledge. Full disaster-recovery readiness still cannot be claimed: the phase that first creates authoritative external market or experiment data must choose a durable backup target and tested restore procedure without introducing a paid service by default.

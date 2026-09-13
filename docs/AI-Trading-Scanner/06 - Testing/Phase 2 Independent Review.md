@@ -1,6 +1,18 @@
 # Phase 2 independent review
 
-Status: **REVIEW REQUIRED; no human approval is recorded.** This checklist accompanies the `review/phase-2-market-data` candidate. It does not authorize a merge, trading, broker connection, or data-provider connection.
+Status: **APPROVED AND MERGED.** The candidate was independently reviewed before merge. This record does not authorize trading, broker connection, or data-provider connection.
+
+## Recorded review evidence
+
+| Field | Evidence |
+| --- | --- |
+| Reviewer | `Dekkerszz` |
+| Reviewed candidate commit | `84fd8074a019ba896a41f4a629ef8b1ae07154a8` |
+| Review outcome | Approved on GitHub |
+| Pull request | #1, merged and closed |
+| Merge commit | `8987f2e431ed2e4d3717023735477baf9eaeea36` |
+| Merge timestamp | 2026-09-13T20:04:51+02:00, from the Git merge commit |
+| Review branch | `review/phase-2-market-data`, deleted after merge |
 
 | Area | Implementation | Behavioral tests | Intended invariant | Failure impact |
 | --- | --- | --- | --- | --- |
@@ -20,4 +32,4 @@ Status: **REVIEW REQUIRED; no human approval is recorded.** This checklist accom
 
 Reviewer focus: inspect rejection paths, timestamp comparisons, quality/provenance consistency, calendar edge conditions, and whether later strategy/replay code is constrained to `CausalBarReader`/`MarketDataSlice` rather than unrestricted future data.
 
-Required review record before merge: reviewer identity, approval date, reviewed commit hash, scope, failure-path observations, any findings, and explicit approval or rejection. Record it without rewriting this candidate's historical facts.
+The required independent-human-review record is complete for this Phase 2 candidate. Any later behavioral change requires its own applicable review and evidence.
