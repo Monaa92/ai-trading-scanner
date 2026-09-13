@@ -2,10 +2,11 @@
 
 Private research project investigating a systematic AI-assisted intraday scanner through deterministic rules, risk controls, realistic backtesting and eventual paper validation. Profitability is unproven; negative results are retained.
 
-Current state: Phase 2 historical-data foundation implemented. In addition to the Phase 1 safety
-boundary, the repository contains immutable canonical OHLCV bars, provenance and content identity,
-an XNYS session calendar, structured quality validation, synthetic fixtures and causal as-of reads.
-No scanner, strategy, broker, AI, portfolio or order execution exists.
+Current state: Phase 2 is complete on `main`; the Phase 3 deterministic-indicator candidate is on
+`review/phase-3-indicators` pending independent review. It adds typed exact-Decimal EMA, Wilder RSI,
+Wilder ATR and session VWAP over canonical causal slices, with explicit warm-up, session/gap behavior,
+quality lineage and batch/incremental equivalence. No scanner, strategy, broker, AI, portfolio or order
+execution exists.
 
 - [Project rules](docs/PROJECT_RULES.md) — authoritative governance.
 - [Agent instructions](AGENTS.md) — required entry point for future agents.

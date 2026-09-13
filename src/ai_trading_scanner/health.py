@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from ai_trading_scanner import __version__
 from ai_trading_scanner.config.models import FoundationConfig
 from ai_trading_scanner.domain.execution import ApprovalPolicy, ExecutionEnvironment, SubmissionMode
+from ai_trading_scanner.indicators import validate_offline_indicator_fixture
 from ai_trading_scanner.market_data import UsEquitiesCalendar, validate_offline_fixture
 
 
@@ -31,6 +32,7 @@ class HealthReport(BaseModel):
     market_data_schema_available: Literal[True]
     xnys_calendar_available: Literal[True]
     synthetic_fixture_validated: Literal[True]
+    deterministic_indicators_validated: Literal[True]
 
 
 def build_health_report(settings: FoundationConfig) -> HealthReport:
@@ -40,6 +42,8 @@ def build_health_report(settings: FoundationConfig) -> HealthReport:
         raise RuntimeError("pinned XNYS calendar did not resolve a known trading session")
     if not validate_offline_fixture():
         raise RuntimeError("synthetic market-data fixture failed validation")
+    if not validate_offline_indicator_fixture():
+        raise RuntimeError("deterministic indicator fixture failed validation")
     return HealthReport(
         status="healthy",
         application="ai-trading-scanner",
@@ -55,4 +59,5 @@ def build_health_report(settings: FoundationConfig) -> HealthReport:
         market_data_schema_available=True,
         xnys_calendar_available=True,
         synthetic_fixture_validated=True,
+        deterministic_indicators_validated=True,
     )

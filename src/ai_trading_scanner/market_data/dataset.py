@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from ai_trading_scanner.domain import DatasetId, InstrumentId
 from ai_trading_scanner.market_data.models import DataProvenance, HistoricalBar, QualityStatus
-from ai_trading_scanner.market_data.quality import DatasetValidator, QualityCode
+from ai_trading_scanner.market_data.quality import DatasetValidator, QualityCode, QualityFinding
 
 
 def _canonical(value: Any) -> Any:
@@ -49,6 +49,7 @@ class CanonicalDataset(BaseModel):
     dataset_id: DatasetId
     provenance: DataProvenance
     bars: tuple[HistoricalBar, ...]
+    quality_findings: tuple[QualityFinding, ...]
 
     @classmethod
     def create(cls, provenance: DataProvenance, bars: Iterable[HistoricalBar]) -> CanonicalDataset:
@@ -96,6 +97,7 @@ class CanonicalDataset(BaseModel):
             dataset_id=calculate_dataset_id(provenance, frozen_bars),
             provenance=provenance,
             bars=frozen_bars,
+            quality_findings=validation.findings,
         )
 
 
@@ -106,6 +108,7 @@ class MarketDataSlice(BaseModel):
     as_of: datetime
     bars: tuple[HistoricalBar, ...]
     content_hash_sha256: str
+    quality_findings: tuple[QualityFinding, ...]
 
     @field_validator("as_of")
     @classmethod
@@ -121,6 +124,9 @@ class CausalBarReader:
     def __init__(self, dataset: CanonicalDataset) -> None:
         self._dataset_id = dataset.dataset_id
         self._bars = dataset.bars
+        self._quality_findings = dataset.quality_findings
+        delay = dataset.provenance.modeled_publication_delay_seconds
+        self._finding_delay = timedelta(seconds=delay) if delay is not None else timedelta(0)
 
     def slice_as_of(
         self, as_of: datetime, instrument_ids: frozenset[InstrumentId] | None = None
@@ -135,9 +141,15 @@ class CausalBarReader:
             and (instrument_ids is None or bar.instrument_id in instrument_ids)
         )
         encoded = json.dumps(_canonical(bars), sort_keys=True, separators=(",", ":")).encode()
+        visible_findings = tuple(
+            finding
+            for finding in self._quality_findings
+            if finding.end_at is None or finding.end_at + self._finding_delay <= as_of
+        )
         return MarketDataSlice(
             dataset_id=self._dataset_id,
             as_of=as_of,
             bars=bars,
             content_hash_sha256=hashlib.sha256(encoded).hexdigest(),
+            quality_findings=visible_findings,
         )

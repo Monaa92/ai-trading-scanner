@@ -1,5 +1,7 @@
 # Broker, economics and recovery extension review
 
+Archived historical snapshot: this note records the documentation-only repository state before executable Phases 1–3. Use [[00 - Project/Current Status]] for current readiness.
+
 Date: 2026-09-13. Scope: final documentation consistency continuation plus broker, experiment-economics, reporting and recovery architecture. No runtime implementation was authorized or added.
 
 ## Readiness and resulting architecture

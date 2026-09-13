@@ -1,12 +1,20 @@
 # Deterministic indicator specification
 
-All formulas below are implementation contracts, not evidence of predictive value. Input is ordered, validated, completed RTH bars of one instrument, feed and price basis. Output carries implementation/parameter version, input revision IDs, latest available_at, units, value and `ready/reason`. Persist missing values as null with reasons, never JSON NaN or zero substitution. Fixed float64 math is acceptable for indicators with pinned tolerances/runtime; monetary sizing uses decimal arithmetic.
+Status: **IMPLEMENTED ON `review/phase-3-indicators`; INDEPENDENT REVIEW PENDING.** The implementation is in `src/ai_trading_scanner/indicators`. It consumes only immutable `MarketDataSlice` inputs, emits one typed point per input bar, and carries dataset/slice/configuration lineage plus visible Phase 2 quality findings.
+
+All formulas below are implementation contracts, not evidence of predictive value. Input is ordered, validated, completed RTH bars of one instrument, feed and price basis. Output carries implementation/parameter version, dataset and slice hashes, latest `available_at`, value and `ready/reason`. Missing values are `null` with typed reasons, never JSON NaN or zero substitution. V1 uses a local 34-significant-digit `Decimal` context with round-half-even for authoritative indicator arithmetic; it does not depend on the process-global Decimal context or binary floating point.
+
+EMA requires a positive integer period. RSI and ATR additionally require the explicit `WILDER` smoothing value. VWAP requires `TYPICAL_PRICE` and `SESSION` reset values. Configurations are frozen, reject unknown fields/coercion, serialize through Pydantic and have a canonical SHA-256 `IndicatorConfigurationId`.
 
 ## V1 initialization and gaps
 
 To avoid unspecified overnight initialization, V1 EMA, RSI and ATR reset each session. This is a deliberate research definition, not a universal indicator convention. VWAP and session extrema also reset. Cross-session smoothing is a future version. No decisions until every mandatory feature is ready; warm-up bars count as consumed data, never performance trades. EMA 50 thus needs at least 50 valid 5-minute bars, which limits V1 to later-session opportunities; this cost is explicit and must not be “fixed” silently after seeing results.
 
 Any missing/invalid required bar invalidates continuity. EMA/RSI/ATR restart from the next contiguous valid segment. VWAP and true session extrema remain unavailable after a session gap until a verified backfill repairs the entire prefix; restarting those mid-session must not be labeled session VWAP/high/low. Repair can affect future snapshots only. Distinguish insufficient history, gap, zero denominator and incompatible adjustment units.
+
+The implementation derives gaps only from discontinuity between sequential observed bars within the same canonical session; it never infers a reset from a weekend, holiday, overnight closure or wall-clock delay. Each new session resets all four calculators under [[00 - Project/Decisions/ADR-016 - Session-reset indicator initialization]]. Consequently V1 ATR deliberately excludes the previous session’s close from the new session’s first true range. A continuous cross-session ATR that includes overnight gaps is a future versioned research alternative, not this accepted baseline.
+
+`CausalBarReader` exposes quality findings only when their causal visibility deadline has passed. A modeled missing interval becomes visible at interval end plus the dataset’s modeled publication delay. Indicator series retain all visible warnings. Fatal slice findings, forged future-visible bars, mixed series, duplicates and out-of-order inputs fail before calculation.
 
 ## Formulas
 
@@ -34,3 +42,5 @@ Join higher-timeframe features with a backward as-of join on **available_at**, r
 ## Acceptance fixtures
 
 Hand-calculated sequences test seeds, recurrence, constant/rising/falling prices, zero volume, flat RSI, warm-up boundary and gaps. Session fixtures test early close, DST and no overnight accumulation. Prefix-invariance property: changing any data with available_at later than decision_at cannot change that decision's features. Vectorized and incremental outputs must agree within documented absolute/relative tolerances; hashes use canonical stored outputs, not platform-dependent display rounding. See [[06 - Testing/Test Strategy]].
+
+The Phase 3 API supports batch calculation and caller-owned incremental calculators with isolated explicit state. Exact outputs match for all four indicators. No vectorized third-party implementation exists in this phase; “batch” is a deterministic fold over the same incremental transition, which prevents two competing formula paths.
