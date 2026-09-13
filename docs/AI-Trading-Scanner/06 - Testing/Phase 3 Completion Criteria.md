@@ -1,8 +1,10 @@
-# Phase 3 implementation completion criteria
+# Full experiment technical completion criteria
 
 Assessment date: 2026-09-13. Evidence inspected: repository tree, Phase 1–2 source/tests/manifests, documentation and Git state.
 
-**PHASE 3 STATUS: NOT READY FOR TESTING.** The repository has an executable offline Phase 1–2 foundation, but it has no experiment runner, scanner, four-agent interface, broker simulation, portfolio/risk/accounting, authoritative persistence or completed experiment. A foundation test is not end-to-end experiment evidence.
+This note predates the gated roadmap’s narrower Phase 3 indicator milestone. It remains the later full-experiment technical gate and must not be used to describe the indicator foundation as incomplete. The Phase 3 indicator candidate and its review evidence are tracked in [[02 - Agents & Strategies/Shared Agent Rules/Indicators]] and [[06 - Testing/Phase 3 Independent Review]].
+
+**FULL EXPERIMENT STATUS: NOT READY FOR TESTING.** The repository has an executable offline Phase 1–2 foundation and a Phase 3 indicator review candidate, but it has no experiment runner, scanner, four-agent interface, broker simulation, portfolio/risk/accounting, authoritative persistence or completed experiment. An indicator-foundation test is not end-to-end experiment evidence.
 
 | Completion criterion | Classification | Repository evidence / gap |
 | --- | --- | --- |
@@ -24,4 +26,4 @@ Assessment date: 2026-09-13. Evidence inspected: repository tree, Phase 1–2 so
 | 16. No secrets, credentials or external dependency for simulation | PARTIAL | Foundation health/tests run offline without credentials; no SimulationBroker exists. |
 | 17. Documented one-command test/experiment entry | PARTIAL | Locked test and health commands exist; no experiment command exists. |
 
-No placeholder, TODO or stub is reported as completed production implementation. IBKR and Kraken are future adapter specifications. Simulation is the only current experiment environment but its adapter still must be built. Phase 1 and Phase 2 foundations are implemented; the exact next milestone is the deterministic indicator slice in [[00 - Project/Roadmap]], followed by the remaining gated sequence.
+No placeholder, TODO or stub is reported as completed production implementation. IBKR and Kraken are future adapter specifications. Simulation is the only current experiment environment but its adapter still must be built. Phase 1 and Phase 2 are complete; the deterministic indicator candidate awaits independent review, followed by the remaining gated sequence in [[00 - Project/Roadmap]].

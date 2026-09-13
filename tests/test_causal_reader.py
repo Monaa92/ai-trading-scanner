@@ -40,6 +40,7 @@ def test_reader_hides_records_until_their_available_at_boundary() -> None:
     assert before.bars == ()
     assert len(first_available.bars) == 1
     assert len(all_available.bars) == 2
+    assert all_available.quality_findings == ()
 
 
 def test_equivalent_consumers_receive_identical_immutable_slices() -> None:

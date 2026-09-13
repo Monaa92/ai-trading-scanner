@@ -14,7 +14,7 @@ Status: Phase 2 canonical historical-data foundation **IMPLEMENTED**; provider i
 
 Dataset identity is `sha256:` plus a SHA-256 hash over canonical JSON containing all provenance fields and bars ordered by instrument/start/timeframe. UTC uses a `Z` representation and decimals use exact base-10 strings. Input ordering does not affect identity. Observation, adjustment, availability, coverage, quality, calendar, normalization or ingestion-vintage changes do. The ID does not include itself or runtime object layout.
 
-`CausalBarReader.slice_as_of` returns a frozen slice containing only records with `available_at <= as_of`, optionally restricted to instrument IDs. The slice has the source dataset ID and its own content hash, so four future agents can receive equivalent eligible information. The reader is not a replay scheduler or a normalized Market Intelligence snapshot and provides no strategy or trading behavior.
+`CausalBarReader.slice_as_of` returns a frozen slice containing only records with `available_at <= as_of`, optionally restricted to instrument IDs. The slice has the source dataset ID, its own content hash and quality warnings whose causal visibility deadline has passed. Modeled missing-interval findings appear no earlier than interval end plus modeled publication delay. The Phase 3 indicator candidate preserves those findings in each result. The reader is not a replay scheduler or a normalized Market Intelligence snapshot and provides no strategy or trading behavior.
 
 ## Provider separation and canonical snapshot
 

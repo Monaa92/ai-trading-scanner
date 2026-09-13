@@ -121,3 +121,4 @@ def test_canonical_dataset_requires_quality_warnings_in_provenance() -> None:
     dataset = CanonicalDataset.create(documented, one_bar)
 
     assert dataset.provenance.quality_status is QualityStatus.WARN
+    assert [finding.code.value for finding in dataset.quality_findings] == ["MISSING_INTERVAL"]

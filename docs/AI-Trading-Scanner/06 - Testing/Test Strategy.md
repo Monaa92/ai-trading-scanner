@@ -1,10 +1,12 @@
 # Testing strategy
 
-Status: Phase 1 and Phase 2 offline pytest suites **IMPLEMENTED** for identities, execution dimensions, startup safety, health and historical-data semantics. Later indicators, trading, property, integration, full replay and frontend tests remain required future work. See [PROJECT_RULES](../../PROJECT_RULES.md) for merge gates.
+Status: Phase 1–2 suites are complete on `main`. The Phase 3 review candidate adds 48 focused indicator cases; independent review remains required before merge. Trading, full replay, portfolio/risk and frontend tests remain future work. See [PROJECT_RULES](../../PROJECT_RULES.md) and [[06 - Testing/Phase 3 Independent Review]].
 
 The initial 111 Phase 1 cases remain regression coverage for valid/malformed IDs, exact enum rejection, dimension independence, PAPER + FULL_AUTO representation, safe defaults, forbidden authority fields, disabled capability switches, redacted validation errors, non-fallback LIVE failure, CLI exit behavior and the in-memory FastAPI health route.
 
 Phase 2 adds 60 collected cases, including expanded `InstrumentId`/`DatasetId` validation. They exercise immutable and decimal-safe bars; half-open/timezone-aware timestamps; actual/modeled availability; session identity; regular, DST, weekend, holiday and early-close behavior; invalid and missing observations; structured severity; dataset hash determinism and sensitivity; modeled-delay enforcement; and causal visibility/equivalent four-consumer slices. Tests use tiny synthetic records and locally packaged calendar data. The suite patches socket connection creation during CLI health to detect unintended network use. No trading behavior is claimed because none exists.
+
+Phase 3 adds 48 collected cases across configuration, EMA, RSI, ATR, VWAP and cross-cutting causality. They verify strict periods/method selection, formula seeds and recurrences, unavailable reasons and units/lineage invariants, constant/rising/falling/mixed values, zero denominators, missing intervals, regular and early-close sessions, weekend/holiday/DST transitions, prefix invariance at multiple lengths, batch/incremental equivalence, global-context-independent Decimal results, causal reader integration, warning visibility/retention, incompatible units and fatal-input rejection. The health check adds one compact four-indicator fixture without network or credentials.
 
 ## Required evidence layers
 

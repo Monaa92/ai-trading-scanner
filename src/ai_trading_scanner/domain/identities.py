@@ -73,3 +73,7 @@ class InstrumentId(Identifier):
 
 class DatasetId(Identifier):
     """Content-derived identity of an immutable market-data dataset."""
+
+
+class IndicatorConfigurationId(Identifier):
+    """Content-derived identity of an immutable indicator configuration."""
