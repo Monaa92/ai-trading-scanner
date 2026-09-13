@@ -1,0 +1,23 @@
+# Agent statistics and aggregation
+
+Extend [[09 - Performance/Performance Metrics]]; do not create conflicting definitions. Every result key includes agent, strategy, model, allocation, participant/run, data/run mode, execution environment, submission mode, approval policy, operating context, performance kind, configuration segment, metric version, reporting currency, period and as_of. ACTUAL_PATH and COUNTERFACTUAL are disjoint. Label all simulated environments.
+
+## Period boundaries and reconciliation
+
+Trade metrics group fully closed episodes by final exit's exchange-local session date; also retain first-entry counts by session for daily limits. A position spanning periods contributes marked P&L/exposure to each period but its closed-trade count/win/loss only once. Partial fills are never independent trades.
+
+Daily periods use versioned exchange sessions. Weekly uses ISO Monday–Sunday containing exchange-local session dates; monthly uses exchange-local calendar month; lifetime uses exact experiment/run start to terminal/as_of. Store explicit UTC boundaries/session IDs. Partial current periods are labeled provisional; missing valuations make coverage incomplete, not zero. Weekend FX/cost postings follow their economic timestamp and are included in weekly/monthly accounting bridges; they are not fabricated exchange sessions. Provide a separate non-session adjustment row so period equity reconciles.
+
+For every period: `net P&L = closing equity - opening equity - net capital flows`. Explain reconciliation to closed-trade P&L through change in unrealized P&L, FX, unallocated/operating costs and non-session adjustments. Transfer cash is not profit. Opening/closing equity is a boundary snapshot, not a sum. Daily P&L sums plus documented non-session adjustments reconcile to week/month/lifetime; calendar assignment and late corrections are versioned. Prior published summaries remain immutable with superseding revisions.
+
+## Required report fields
+
+Each trade/day/week/month/lifetime view reports, where defined: opening/closing equity; Gross Trading, Net Trading and Net Economic P&L; returns; entry and closed-trade counts; wins/losses/breakevens; win rate; average winner/loser/trade; average R; expectancy; profit factor; best/worst trade; marked max drawdown/duration; realized/unrealized P&L; exposure; commission/spread/slippage/exchange/FX and total execution costs; AI costs; execution costs/capital and gross profit; AI cost/trading performance; average holding duration; MFE/MAE/peak/giveback/exit reasons; evaluated setups; TRADE/NO_TRADE decisions; executed trades; cost-driven rejections; AI rejections; risk/safety blocks; and lockouts. Include strategy/risk/management/AI/cost versions and capital flows beside the measures.
+
+Recompute ratios from underlying totals, not averages of daily ratios: win rate=Σwins/Σclosed trades, profit factor=Σgross profit/Σgross loss, average winner/loser use counts, average R uses trade R values, expectancy uses net trade totals/count. Compound no-flow period returns rather than summing; use [[01 - Architecture/Portfolio Accounting/Capital Allocation]]'s flow-boundary time-weighted method in normal operation. Max drawdown is recomputed over the full marked path, never summed or maxed blindly from daily drawdowns with reset peaks. Weighted holding/exposure calculations use actual durations and complete denominators.
+
+Counts use distinct candidate/proposal/lock identities. Primary rejection gate gives mutually exclusive terminal-outcome counts; rule-failure counts are a separately labeled many-to-one diagnostic. Report pending/expired/invalidated/user-rejected proposals separately; repeated revalidation cannot inflate detected candidate counts. Positive/negative/zero P&L days are mutually exclusive; no-entry/inactive tags are orthogonal, since costs/FX can move equity without a trade. Include missing-data/system-disabled days and their cause; do not remove them to improve consistency.
+
+Sharpe, Sortino, Calmar, payoff, streaks and symbol/time-of-day/weekday/regime slices follow existing definitions and prespecified sample/coverage rules. Display N, independent session count, confidence/coverage and UNAVAILABLE/UNSTABLE flags. No infinite profit factor trophy for no losses, or annualized precision from a few EUR50 trades. Before/after material configuration changes remain separately queryable; lifetime aggregation across segments is labeled mixed-policy and not a controlled strategy result.
+
+[[03 - Experiments/Survival Analysis]] supplies the additional preservation metrics. [[09 - Performance/Reporting Architecture]] defines descriptive comparison without a synthetic best-agent score.

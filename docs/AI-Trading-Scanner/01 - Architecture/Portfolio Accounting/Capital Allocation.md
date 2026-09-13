@@ -1,0 +1,33 @@
+# Capital allocation and compounding
+
+EUR50 is the initial experiment configuration, not a branch in trading logic. Normal agents can eventually use EUR50, EUR500, EUR5000 or another approved allocation/currency through the same decimal risk/sizing engine. Changing capital does not validate a strategy or waive live gates.
+
+## Three different quantities
+
+- **Broker account equity:** all marked assets/cash less liabilities in the funding account, including unallocated assets and other agents. Never supplied as every agent's sizing balance.
+- **Allocated trading capital / agent equity E_i(t):** the agent's attributed cash and positions less liabilities, accrued costs and losses, with authorized capital transfers. Initial allocation is a funding event; current marked equity evolves. Optional allocation ceiling limits how much of gains may be used, rather than silently granting all broker equity.
+- **Available buying power:** the spendable settled cash within that allocation after reservations, further restricted by parent account cash, settlement/capability rules and unlevered exposure limits. Marked equity/withdrawable value is not all immediately spendable.
+
+Each allocation has stable ID, agent/funding account/environment/currency, effective times, starting contributed capital, transfer history, risk/capital ceilings and revision. One active funding allocation per agent run initially; moving accounts requires a flat reconciled cutover/new run segment. Separate reporting and instrument currencies use the existing recorded FX model.
+
+General risk budget is `B_i=min(r_i * E_eligible_i, M_i, H_agent_i, H_account_i, remaining portfolio risk capacity)`. All headroom/capacity terms subtract downside already committed by other positions/intents; when revalidating an existing reservation do not subtract that same reservation twice. `E_eligible_i=min(E_i, configured capital ceiling if present)` and r_i/M_i are owner-approved versioned risk fraction/maximum monetary risk. An omitted optional M or capital ceiling means no additional bound, not zero; required fields must be explicit. Initial experiment: E_i(0)=EUR50, r_i=0.01, daily fraction=0.03, one position, three first-filled entries/day, net RR≥2. These are profile values, not universal constants. Account limits may only make the result more restrictive. General multiple-position profiles need aggregate downside/reservation tests before activation; the initial profile does not permit pyramiding.
+
+Profits/losses automatically increase/decrease current equity and hence percentage budgets under the frozen compounding rule; this is not a configuration mutation. No reset to starting equity after loss, and gains cannot defeat a monetary cap or the daily ceiling. Profile changes are separate administrative events. An agent cannot raise r/M/position limits because it has performed well.
+
+## No double allocation
+
+Within a reconciled funding account and consistent valuation basis, `account_equity = unallocated_equity + sum(agent_attributed_equity)` after explicitly explained external/manual liabilities. Per currency, total attributed settled cash plus unallocated settled cash must equal ledger settled cash; reservations are encumbrances **inside** attributed cash, not extra assets. Sum of all spend reservations cannot exceed eligible settled cash; unrealized value or another agent's unused allocation cannot fill a deficit.
+
+Allocation/transfer and order reservation use one account coordinator transaction with agent/account revision checks and fencing. Transfers debit one bucket and credit another with linked balanced ledger events; no money is created. Withdrawals/reallocation can use only unencumbered settled cash, not open-position backing or UNKNOWN-order reservations. Concurrent allocation and order requests cannot both spend the same capacity. Deficits/unexplained reconciliation differences lock relevant agents/account until resolved. A parent-account cap is enforced across agents even when each independently passes its own cap.
+
+Four independent simulated EUR50 accounts have four separate funding namespaces. They are legitimate replicated experimental starting conditions, not permission to assign the same real EUR50 four times. Shared broker-paper funding uses a real internal allocation partition of that paper balance; account contention is disclosed. Independent experiments should avoid that coupling. See [[01 - Architecture/Agent Architecture]].
+
+## Deposits, withdrawals and normal changes
+
+Frozen experiments prohibit top-ups, withdrawals and allocation edits. Unexpected external changes lock/reconcile; retain original run, mark protocol deviation/termination under the registered rule, never erase losses or restart the survival clock silently.
+
+Initial NORMAL policy permits deliberate funding/profile changes only while flat, with no outstanding/unknown orders, at the next verified session boundary. Stage a request with old/new values, currency, source/destination, actor, requested/effective time, reason and evidence; validate both agent/parent capacity and ceilings, invalidate proposals, then commit transfer/config activation and new performance segment atomically. No intraday deposit clears an existing daily/emergency lock. Unexpected intraday flows remain an incident; future intraday allocation support requires an explicitly specified new policy.
+
+At the next normal-session start E0 includes authorized funding; the existing daily formula generalizes to configured d: `D=max(0,E0-(E_i-F_i)); L=d*min(E0,E_i-F_i)` with flow-adjusted current equity positive. F_i includes agent transfers, even when they are not external broker deposits. Initial activation avoids discretionary within-session flows; accounting still records unexpected flows for attribution. In experiment d remains 0.03. Multiple applicable agent/account daily limits all hold.
+
+Money P&L is equity change minus net capital flows. For comparisons across normal deposits/withdrawals, use flow-boundary subperiod time-weighted returns `product(1+r_subperiod)-1` with valuations immediately before/after each flow; missing boundary valuations make return unavailable, not estimated invisibly. Maintain contribution/withdrawal totals and capital-segment reports. Experiment preservation ratios require no-flow conditions; do not compare raw ending balances of differently funded agents as skill. See [[09 - Performance/Agent Statistics]].

@@ -1,0 +1,19 @@
+# Dashboard and leaderboard requirements
+
+Specification only; no frontend/API is implemented. Authorized owners can view multiple agents; an agent runtime has no permission to use this cross-agent reporting access.
+
+Agent detail: lifecycle and scoped lock reasons; data/run mode, execution environment, submission mode, approval policy and operating context in separate labels; allocation/current equity/currency; spendable cash; open owned positions/protection; strategy/risk/management/AI versions; config effective history; approvals; orders/fills/trades; NO_TRADE/rejected candidates; and complete decision timeline. Every current value shows as_of/freshness and simulated/actual-path/counterfactual identity. Stale balances cannot appear live.
+
+Approval card displays the full immutable proposal from [[01 - Architecture/Execution/Approval Workflow]], including risk money/percentage/denominator, quantity, entry envelope/stop/target/net RR, AI evaluation, management mandate and rejection/safety results. Primary actions are APPROVE or REJECT; user need not reconstruct an order. Refresh never silently changes the terms of an approved card. Server-side expiry and revalidation may return BLOCKED; show reason, not “order placed.” Acknowledged, partly filled and cancellation-pending are separate visible states.
+
+## Statistics and leaderboard
+
+Provide trade, daily, weekly, monthly and lifetime reports; equity/drawdown and cumulative Gross Trading/Net Trading/Net Economic P&L curves; realized/unrealized P&L; exposure; trade lifecycle; execution/AI cost decomposition; rejected/risk/safety/AI events; and survival histories. Default leaderboard includes all registered participants, failed/locked/inactive included. Columns include agent/strategy/model/status, equity, period returns, trade and TRADE/NO_TRADE counts, expectancy, profit factor, max drawdown, days survived, lockouts, sample/coverage, execution/AI costs and config segment. Common reporting period, dataset-equivalence evidence, currency and performance kind are mandatory; partial or mismatched periods are flagged instead of silently ranked together.
+
+Allow explicit sort/comparison by return, risk/exposure, drawdown, expectancy, survival or consistency (e.g. positive/negative/zero days and return dispersion shown separately). No default composite “best agent” or survival score. Show metric definitions/sample uncertainty and “descriptive experimental results, not evidence of future profitability.” Cash/no-trade baseline, contributions and fees remain visible; no-trade survival is not strategy success. Do not hide failed participants or counterfactual labels. Ranking different hypotheses in one market window does not identify the causal value of AI.
+
+## Privileged interactions
+
+Trade approval is not a mode change. Enabling FULL_AUTO requires a dedicated settings flow with authenticated owner role, exact agent/account/profile preview, explicit confirmation and effective-time/reconciliation checks. LIVE requires a separate readiness-evidence review and environment confirmation; enabling FULL_AUTO LIVE is an additional distinct action after live authorization. No combined “approve and go live” button, keyboard shortcut or AI-supplied link can enable autonomy. Backend enforces the same checks even if UI is bypassed.
+
+Kill switch is clearly accessible, scoped and audited; it blocks new exposure immediately and shows outstanding reduction/reconciliation work without falsely claiming flat. Config/allocation/lock-clear commands display old/new versions and effects and require correct privileges. Frozen experiment settings are read-only except trusted emergency restrictions or ending the run; a user cannot edit and keep the same confirmatory identity. All actions carry command IDs/idempotency, actor and audit references.

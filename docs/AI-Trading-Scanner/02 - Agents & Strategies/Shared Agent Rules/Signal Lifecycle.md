@@ -1,0 +1,11 @@
+# Signal and proposal lifecycle
+
+Signals describe observations/strategy eligibility; ProposalVersion describes a complete evaluated trade. Human consent and OrderIntent are separate. Risk-valid is not user-approved, and no proposal becomes OPEN without a fill. Records bind agent/allocation/run/config; shared candidate data does not share decisions.
+
+Signal flow: OBSERVED → CANDIDATE → STRATEGY_VALID, with REJECTED, EXPIRED, INVALIDATED or CANCELLED paths and all predicates retained. Selection/AI links to the same candidate and cannot reverse strategy rejection. Canonical downstream flow in [[01 - Architecture/Execution/Approval Workflow]] is RISK_VALID → SAFETY_VALID → AWAITING_APPROVAL → USER_APPROVED → REVALIDATING → ORDER_INTENT; legitimate automatic modes use AUTO_AUTHORIZED. SIGNAL_ONLY ends at RECORDED_SIGNAL_ONLY. Distinguish BLOCKED_BY_RISK, BLOCKED_BY_SAFETY and REJECTED_BY_USER. Retire ambiguous APPROVED in new schemas; historical risk approvals never imply human consent.
+
+After intent creation, invalidation/cancellation uses [[01 - Architecture/Execution/Order Lifecycle]], never deletes fills. Display PARTIALLY_FILLED/OPEN/EXITED derives from order/position facts. One proposal version permits at most one entry intent; one signal key permits at most one executing entry across its versions. New versions invalidate unsent predecessors. Dedup key includes agent, allocation, participant/run, strategy version, instrument, trigger interval and direction. Data corrections append evaluations without duplicate trades.
+
+Provisional expiry remains min(trigger_end + two primary intervals, entry cutoff), bounded further by approval TTL. A 10:05 trigger may first execute at 10:10 before 10:15 expiry. Fresh snapshot/risk checks do not extend expiry; now >= expires_at blocks consent/dispatch. Waiting proposals hold no capital; potentially submitted intents retain reservations until terminal reconciliation.
+
+Transitions append actor/scope/reason/time/expected revision. Repeated events are idempotent. Rejected/expired/unfilled proposals consume zero daily entries; first positive fill consumes one, further partials do not. Non-trades remain analyzable under [[03 - Experiments/Counterfactual Analysis]] without changing actual equity.

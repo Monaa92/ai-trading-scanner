@@ -1,0 +1,97 @@
+# Testing strategy
+
+Specification only: no test suite or runtime is implemented in this pass. Future Python tests use pytest; property testing tooling is selected during foundation. Frontend unit tests and Playwright follow the dashboard phase. See [PROJECT_RULES](../../PROJECT_RULES.md) for merge gates.
+
+## Required evidence layers
+
+| Layer | Fixtures and expected behavior |
+| --- | --- |
+| Unit — indicators | Hand-computed VWAP/EMA seeds/Wilder RSI+ATR, flat/zero cases, exact warm-up, gaps and session resets match [[02 - Agents & Strategies/Shared Agent Rules/Indicators]] |
+| Unit — strategy | Equality boundaries fail/pass exactly as specified; missing research config blocks evaluation; future resistance/pivot data cannot trigger candidate |
+| Unit — sizing | Zero/negative stop distance, fees/minima, EUR/USD units, cash limitation, downward quantity rounding, RR after costs; all invalid inputs reject |
+| Unit — daily limits | Realized+unrealized loss, dynamic ceiling, profits not increasing ceiling, late fills, latch persistence and session reset |
+| Unit — time/state | UTC vs New York DST, holidays/early closes, close/open labels, deadlines, valid/invalid lifecycle transitions |
+| Property/invariant | For every approved q: modeled risk≤budget and reserved spend≤available cash under same valid inputs; actual gap loss is not asserted bounded |
+| Property/invariant | AI cannot enlarge cap/change stops; no post-decision availability influences result; duplicate events do not double cash/quantity; lockout prevents new entry intents |
+| Property/invariant | Two concurrent approvals cannot occupy two slots; cancel/fill races cannot release committed cash early or intentionally over-close; per-currency ledger balances |
+| Integration | Provider pages/cursors/revisions, normalized feed/time semantics, broker capability/error mapping, durable transaction/outbox, API auth/account/mode scope |
+| Backtest regression | Tiny fixtures pin ordered trace, candidate/rejection count, fills, fees, cash, drawdown and end-state; matching P&L alone insufficient |
+| Simulation/failure | Gaps/halts, same-bar stop+target, partials, API timeout before/after acceptance, cancel race, restart, duplicate/out-of-order fills, stale FX/quotes, DB loss and clock drift |
+| End-to-end later | Paper entry→partial fill→protection→exit→reconciliation; emergency stop; UI displays freshness and cannot bypass rejected risk |
+
+## Mandatory adversarial scenarios
+
+1. A 10:05 decision cannot see the 10:15 quarter-hour or 10:30 hour, or fill at 10:05 open. Adding/changing later bars leaves earlier decision trace unchanged.
+2. Two symbols compete for the final slot/day entry. One atomic reservation wins; loser re-evaluates or expires. Stable input order produces identical winner on replay.
+3. Broker accepts entry but network times out. Restart queries the same client ID and records one order/position, not a second submission.
+4. Cancel request races with partial fill. Fill is recorded/protected, remainder retained until terminal reconcile; counters increment once.
+5. Daily unrealized loss crosses the dynamic ceiling then recovers. New entries stay locked until verified next session; emergency lock remains until explicit clearance.
+6. Fractional q rounds below minimum. Reject, never round up. If filled residual cannot be protected/liquidated under capability rules, entry capability test fails.
+7. AI returns extra quantity field, mismatched candidate IDs, NaN, malformed JSON, stale response or outage. Treatment makes no new entry; existing exit control proceeds.
+8. End-of-day flatten misses its execution window/encounters halt. End state reports an open unresolved position and incomplete run; no fake closing fill.
+9. Revised bar/corporate action arrives late. Old decisions remain immutable; future features use repaired input with new lineage and no retroactive order.
+10. Database commit fails before submission. No network order occurs. Lost acknowledgement after successful commit remains UNKNOWN and reserved.
+
+Fixture numeric values are synthetic tests, not strategy optimization. Precision tolerances must be justified per computation; monetary invariants use exact decimal comparisons. Any stochastic scenario fixes seed and event-indexed random draws; nondeterministic live/provider behavior is validated via captured events, not asserted reproducible.
+
+## Risk-critical merge and release checks
+
+Behavioral changes require relevant unit+property+integration/failure and deterministic replay tests, documented results, comparison with previous accepted strategy where applicable, synchronized histories/ADRs, diff review and independent competent reviewer approval. Changed expected outputs need an explained causal diff; do not bless a new golden result solely to make tests pass. Critical test failures or missing evidence block merge. Network contract tests use isolated paper credentials/mode only and require authorized setup; unrun checks are explicitly reported.
+
+Documentation-only checks: all created/changed files in scope, no secrets, coherent Markdown/wiki links, all mandatory ADR fields, governance/spec consistency and Git state. Do not report design fixtures as executed tests.
+
+## Agent, mode and experiment invariants
+
+The following are required future tests, not executed in this documentation pass. Use independent contexts plus adversarial shared-account fixtures, every valid execution-mode/environment combination, races and restart boundaries.
+
+| Scenario | Required assertion |
+| --- | --- |
+| Agent A requests B snapshots/orders/approval | Scoped repository/auth/foreign-key checks deny; authorized owner reporting remains possible |
+| Agent A exceeds its allocation while B has idle capital | Reject without borrowing; total broker balance does not enlarge A's budget |
+| Concurrent allocation/transfer and reservations | Balanced atomic transfers and agent+parent revision conflicts prevent double spending |
+| Local daily lockout | A cannot trade, independent B remains eligible |
+| Shared account/system integrity lock | All affected agents block; unrelated independent account remains unaffected |
+| Manual proposal without consent | No executable intent/outbox/submit; never infer human approval from risk PASS |
+| Approval followed by adverse price, loss, insufficient cash or capability change | Fresh risk/safety blocks even though user approved |
+| Expired/stale/mutated proposal | Reject at server deadline/version/hash; changed quantity/stop/target requires new consent |
+| Duplicate/conflicting approve/reject race | One terminal decision and at most one intent; no replay after restart |
+| SIGNAL_ONLY | Full diagnostics recorded, no dispatch authority or durable trading reservation |
+| FULL_AUTO | Same failing safety/risk fixture blocks as manual; missing auto administrative mandate also blocks |
+| Autonomous frozen mutation | Changed strategy/risk/model/prompt/management hash blocks; allowed preregistered adaptive update logs state without rewriting manifest |
+| AI attempts mode/LIVE/risk/lock/config change | Rejected at privilege/API boundary regardless of response format |
+| Counterfactual fill or rejected-candidate outcome | Cannot post to actual-path ledger, risk headroom, trade/survival counts or leaderboard default |
+| Period aggregation | Daily plus non-session P&L bridges to weekly/monthly/lifetime equity; ratios recompute from totals; open trades/flows/config segments handled |
+| Account/agent snapshots | Fills/fees/FX/settlement reconcile; sum allocations plus unallocated equals parent; duplicate fills do not duplicate attribution |
+| Restart after accepted-but-timed-out submit | Same client ID reconciles once; no implicit consent, expiry extension or reset lock |
+| Dynamic stop/profit-taking | No stop widening, no over-close, no future-bar activation; old protection until acknowledgement, residual minima respected |
+| Configuration cutover | Flat/no unknown order/session gate enforced, proposals invalidated, actor/old/new/effective time retained |
+| Survival endpoint/no-trade/outage | Failure/censoring/lock episodes distinct; no artificial score/probability from four paths; inactive losses/costs visible |
+| Kill switch during dispatch | Permission epoch blocks unsent attempts; possible in-flight acceptance remains reconciled, never declared impossible |
+
+Run projection/ledger and API isolation integration tests as well as domain properties; UI-only controls are insufficient. Dynamic management requires complete portfolio comparative backtests, not only amendment unit tests. Frozen experiment fixtures replay the same data under reordered worker schedules and verify per-agent results apart from explicitly modeled latency. Approval replay must retain actual/scripted latency and no hindsight consent. These join the existing independent-review merge gate.
+
+## Broker, strategy, capital and economics completion tests
+
+These are behavioral tests required in future implementation. Interface/import existence alone does not pass.
+
+| Scenario | Required behavior |
+| --- | --- |
+| Agent attempts direct SDK/network/provider call | Architectural dependency test and runtime capability boundary deny it; only execution coordinator can invoke BrokerAdapter |
+| FULL_AUTO with SIMULATION/PAPER/LIVE | Approval policy never mutates environment; PAPER + FULL_AUTO validates, LIVE remains disabled without a separate owner activation/readiness artifact |
+| IBKR/Kraken adapters registered | Registration changes no environment/universe/credentials; Experiment 1 remains EQUITY and Kraken CRYPTO is rejected |
+| Unsupported/UNKNOWN capability | Proposal rejects before reservation/network mutation with exact reason |
+| Simulation startup | Succeeds with no broker/API credential variables and performs no network access |
+| Four agents share one normalized snapshot | Snapshot/data-availability hashes match while cash, reservations, positions, P&L, costs, risk and order attribution remain independent |
+| NO_TRADE | Persists as normal decision with structured reason and creates no proposal/reservation/order; zero-trade run remains valid |
+| Round-trip cost decision | Both entry and exit costs plus configured spread/slippage/fees are included; sufficient gross but insufficient net edge rejects |
+| Gross/net/economic accounting | Gross Trading, Net Trading and Net Economic P&L reconcile through separate execution- and AI-cost ledgers without changing portfolio cash for AI costs |
+| Historical fee profile | Changing current profile creates a new version; old run recomputation retains its embedded/content-addressed schedule |
+| Stale market snapshot | PAPER/future LIVE entry rejects where freshness policy requires; exits/protection follow safe failure contract |
+| Capital sweep replay | Stateless decision artifact reuses inference reproducibly across EUR 50/100/250/500/1000; each execution ledger remains isolated |
+| Portfolio-dependent strategy | Capital/cash/prior position/risk input marks replay non-equivalent and forces a separately identified inference/run |
+| MVC/reporting | Underlying net P&L/return/drawdown/executable trade/rejection/cost/sample/stability inputs persist; no result is inferred from positive P&L alone |
+| AI budget races/hard stop | Atomic usage reservation prevents overspend; hard stop blocks new AI calls but cannot debit portfolio or strand protection/exits; owner resume is explicit |
+| Strategy/model dimensions | Same strategy can vary model and same model can vary strategy; Experiment 1 Multi-Factor receives no extra raw information |
+| Profit management | No universal profit-cap invariant exists; registered strategy exits obey central hard downside limits, causal inputs and immutable re-approval |
+
+The Phase 3 fixture must execute one deterministic end-to-end run and assert trace contents, balances, attribution and metrics. Until that exists, [[06 - Testing/Phase 3 Completion Criteria]] remains NOT READY FOR TESTING.

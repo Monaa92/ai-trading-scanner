@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Obsidian machine-local workspace/session state
+**/.obsidian/workspace*.json
+**/.trash/
+
+# Regenerable Graphify output (never treat as hand-maintained vault documentation)
+**/graphify-out/

@@ -1,0 +1,37 @@
+# Risk management
+
+Canonical risk specification, EUR50 baseline `risk-v0.1.0` with allocation-scope extension `risk-contract-v0.2.0`, 2026-09-13. Values are RISK CONSTRAINTS, not empirically optimal parameters. [[01 - Architecture/Portfolio Accounting/Position Sizing]] owns monetary formulas; [[00 - Project/Decisions/Risk History]] records changes.
+
+## Equity, cash and limits
+
+Initial experiment reporting currency is EUR; execution instruments initially USD. E(t), E0, cash and daily counters here refer to the agent's attributed allocation, not an entire shared broker balance; parent-account constraints additionally apply. Normal currencies/fractions/limits generalize under [[01 - Architecture/Portfolio Accounting/Capital Allocation]]. Equity E(t) is cash by currency plus long positions marked conservatively at valid bid, translated using time-stamped conservative FX, less accrued liabilities/costs. Maintain trade P&L and FX P&L attribution separately. Unknown/stale marks, FX or ledger reconciliation disable new exposure. Broker buying power may include leverage; it never overrides the internal unlevered spendable-cash ledger. Settled cash and broker account restrictions both apply.
+
+Initial simulated capital is EUR 50, not a hard-coded USD amount. Risk per entry ≤0.01·E(t), initially about EUR 0.50. In the initial profile, at most one occupied position/entry reservation per agent allocation across its strategies; at most three newly filled entry intents per exchange session. No shorts, leverage, options, CFDs, pyramiding, averaging down or reused entry intents. Intended minimum **net modeled** reward/risk is 2.0, after round-trip modeled costs/slippage/FX. If any constraint cannot be satisfied, quantity is zero and the setup is rejected.
+
+## Daily realized plus unrealized loss
+
+Realized-only monitoring would hide an open losing position. Use both realized and unrealized equity change, including fees and FX effects, not just closed trades. At session start record reconciled positive equity E0. Let F(t) be net external deposits minus withdrawals since that snapshot, and let E*(t)=E(t)−F(t). V1 prohibits discretionary cash flows mid-session; unexpected flows trigger reconciliation/lockout rather than expanding budgets.
+
+Define daily draw from starting equity D(t)=max(0,E0−E*(t)); ceiling L(t)=0.03·min(E0,E*(t)), provided E*(t)>0. Lock new exposure when D(t)≥L(t), or equity is nonpositive/unknown. This conservatively interprets “3% of current equity” while preventing profits from increasing the day's ceiling. It is a session-start loss limit, not a trailing peak-to-trough stop. At EUR 50 the starting ceiling is EUR 1.50; as equity falls, the exact crossing is slightly below EUR 1.50. Do not present EUR 1.50 as an invariant fixed stop.
+
+New modeled risk must also fit remaining daily headroom H=max(0,L−D), subtracting any outstanding reserved additional downside. One-position/no-add V1 means a new entry normally requires a flat ledger. A loss-lock latches for the rest of the session even if the position recovers. At trigger: cancel unfilled entries, preserve protection and request a controlled reduction/flatten under the exit policy. No entry filters, AI decisions or daily entry counts may block a legitimate reduction. A stop or flatten order does not guarantee timely execution during a gap/halt/outage.
+
+Daily counters reset only on a verified new exchange session after reconciliation; process restart or UTC midnight never resets them. Emergency/reconciliation/configuration lockouts do not auto-clear with the new day. Late fills/corrections recalculate affected counters and may impose additional lockout; never undo already recorded exposure.
+
+## Reservation and trade-count rules
+
+Preflight creates a complete proposal without holding capital during consent. Reserve agent and applicable parent-account position/day/cash/risk capacity **atomically** with the final authorized intent after [[01 - Architecture/Execution/Approval Workflow]] and [[01 - Architecture/Execution/Safety Gate]] revalidation, using both revisions and single-writer fencing. Reassess on conflicts. Immediately before submission revalidate lockout/freshness/capabilities and ensure quantity/price bounds remain within reservation; changed economics require a new risk decision and updated reservation, never an unreviewed increase.
+
+Consume a daily trade on the first positive fill of a distinct entry intent, counted by exchange session of execution, not submission. Further partial fills are the same trade. Fully rejected, expired or cancelled zero-fill intents consume no trade, but reserve a slot while submission/fill status is uncertain. Submitted zero-fill cancellations release only after terminal status and fills reconcile. An exit does not consume an entry slot. Cancel/replacement chains retain the same entry intent; flat after any partial closeout prohibits later residual entry fills by cancelling remaining entry quantity. Unexpected late fills are incidents, not ignored duplicates.
+
+## Other mandatory gates
+
+Reject invalid stop/target geometry, non-finite inputs, unsupported fractional/protection capability, broker minimum violations, insufficient capital, stale/missing quotes or FX, invalid/crossed quotes, spread above the registered ceiling, session cutoff, halted/unknown status, unresolved position discrepancy, existing entry exposure, corrupted configuration and unavailable durable audit storage. Spread/age/cost ceilings must be chosen and measured before paper entry; no universal numeric default is assumed.
+
+Partial fills immediately enter the ledger and require protection for filled quantity; reserve remaining entry exposure until terminal reconciliation. Rejected protective exits are emergencies. No two competing sell orders may over-close into a short position. Broker/API ambiguity halts new exposure and starts reconciliation. Gap/slippage can exceed modeled risk: record realized overruns honestly, keep conservative stress scenarios, and never claim a guaranteed 1% realized-loss cap.
+
+AI may veto/rank; it has no sizing field or risk-limit authority. Any future exposure reduction must still pass the deterministic engine. A high score, user interface suggestion, or opportunity ranking cannot bypass a failed rule. Emergency lockout persists independently of strategy or AI state. See [[07 - Operations/Runbooks/Incident and Failure Procedures]].
+
+## Scope and general profiles
+
+Initial 1%, 3%, one-position and three-entry constraints are frozen profile values. General profiles use validated r, d, maximum monetary risk and aggregate position/day limits under owner-controlled versions. All parent-account ceilings still apply. [[01 - Architecture/Portfolio Accounting/Capital Allocation]] defines compounding/flows/no-double-spend; agents/AI cannot change profiles or unlock themselves. Local locks do not lock independent accounts; shared integrity locks affect all funded participants. [[01 - Architecture/Execution/Trade Management]] revalidates remaining risk and forbids long-stop widening. General profiles/dynamic policies are not enabled by this specification.
