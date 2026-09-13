@@ -1,6 +1,6 @@
 # Configuration and version manifests
 
-Status: specification. Configuration is data, separately versioned from code; no runtime files are created in Phase 0.
+Status: Phase 1 foundation configuration IMPLEMENTED; strategy, risk, data, costs, broker and experiment manifests remain specifications. Configuration is data and remains separately versioned from code.
 
 | Namespace | Required contents | Classification |
 | --- | --- | --- |
@@ -30,3 +30,9 @@ Startup checks environment allowlist, capability snapshot, valid manifest hashes
 AgentConfigVersion binds strategy/parameters, risk fraction/monetary/daily/portfolio/position/trade limits, allocation/currencies, universe/session, management, AI, data/run mode, execution environment, submission mode, approval policy, NORMAL/EXPERIMENT context, optional experiment registration, approval TTL/mandate and lifecycle/safety policy. [[01 - Architecture/Execution/Execution Modes]] owns valid combinations. EUR50 and baseline risk numbers are profile values, not universal schema constants.
 
 Frozen manifests bind exact participant hashes and adaptive algorithm bounds; agents cannot update config or accept a changed model alias. NORMAL changes such as risk 0.50%→0.75% record old/new values, actor, requested/effective times, rationale, checks and a new segment. Initial cutover requires flat/reconciled state at session boundary, invalidated proposals and new permission epoch. See [[01 - Architecture/Portfolio Accounting/Capital Allocation]] and [[03 - Experiments/Autonomous Experiments]].
+
+## Implemented Phase 1 configuration
+
+The bundled `phase1-v1` TOML artifact contains a configuration-version ID, the five execution dimensions and explicit disabled-capability fields. Pydantic rejects unknown keys, missing required fields, malformed IDs, unknown enum values, LIVE startup, ORDER_ENABLED startup, experiment execution and any attempt to set LIVE, paper orders, broker connections, external service calls or AI inference to true. Errors identify fields without printing submitted values. No environment variable supplies hidden behavior or credentials.
+
+The safe default is `HISTORICAL_REPLAY + SIMULATION + SIGNAL_ONLY + MANUAL_APPROVAL + NORMAL`. EUR50, trading capital, risk thresholds, broker selection and AI budget are absent because Phase 1 does not implement those systems. Run `uv run --locked ai-trading-scanner health` to validate the bundled configuration or pass `--config PATH` to validate another Phase 1 TOML file without fallback.

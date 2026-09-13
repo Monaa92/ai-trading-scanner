@@ -1,6 +1,6 @@
 # Execution dimensions and privilege boundaries
 
-Status: architecture specification; no runtime configuration or broker connection exists.
+Status: Phase 1 domain/configuration model IMPLEMENTED; execution, broker connections and operational PAPER/LIVE remain unimplemented.
 
 Five fields remain distinct in every immutable agent configuration and run manifest:
 
@@ -37,3 +37,7 @@ Environment, submission-mode, approval-policy and context changes are privileged
 Agent and AI services cannot enable ORDER_ENABLED, FULL_AUTO or LIVE; select credentials; allocate additional capital; increase risk; disable safety; or clear their own locks. Owner activation checks identity, target agent/account, environment, adapter capability, manifest, readiness evidence and a confirmation challenge before an audited transition. An emergency disable blocks new exposure while preserving mandatory exit, protection and reconciliation work.
 
 MANUAL_APPROVAL consents only to the exact initial order and displayed fixed protection/target, scheduled closeout and bounded emergency-reduction mandate. A material change to entry, stop, target, quantity, trade-management mandate or any other execution-critical field invalidates approval. Executing already authorized protective actions is not a discretionary amendment. Every dispatch receives final risk and safety revalidation regardless of approval policy. See [[01 - Architecture/Execution/Approval Workflow]], [[01 - Architecture/Execution/Safety Gate]] and [[09 - Performance/Reporting Architecture]].
+
+## Phase 1 executable boundary
+
+`ExecutionDimensions` represents every documented value without coupling the fields. `FoundationConfig` is deliberately narrower: it rejects LIVE, ORDER_ENABLED and experiment execution before startup. PAPER + FULL_AUTO remains structurally valid when SIGNAL_ONLY, and PAPER + ORDER_ENABLED + FULL_AUTO remains valid in the domain model for future gated implementation. No current object grants submission, credential, allocation, risk or lock authority.

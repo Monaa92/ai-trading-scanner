@@ -43,7 +43,7 @@ Before merging such code, require relevant unit, property, integration, determin
 
 ## Security and authorization
 
-Secrets never belong in Git/GitHub, Obsidian, logs, screenshots or documentation. `.env` remains local and ignored; create a credentials-free `.env.example` only in a later foundation task. Separate read-only data, paper and future live credentials. Development must not load live credentials. No commit, push or PR without explicit user instruction. The 2026-09-13 recovery task explicitly authorizes one reviewed architecture/documentation foundation commit and push to `origin/main`; it does not authorize a pull request or implementation.
+Secrets never belong in Git/GitHub, Obsidian, logs, screenshots or documentation. `.env` remains local and ignored; create a credentials-free `.env.example` only when a real variable contract exists. Separate read-only data, paper and future live credentials. Development must not load live credentials. No commit, push or PR without explicit user instruction. The 2026-09-13 recovery task authorized the architecture/documentation foundation commit, and the subsequent Phase 1 instruction explicitly authorizes one reviewed offline-foundation commit and push to `origin/main`. Neither authorization includes a pull request or trading activation.
 
 Live remains disabled regardless of implementation maturity. [Live Readiness](AI-Trading-Scanner/06%20-%20Testing/Live%20Readiness.md) is a blocking evidence gate plus a separate explicit owner decision; Phase 17 is conditional and may never happen.
 

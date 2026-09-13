@@ -2,7 +2,9 @@
 
 Private research project investigating a systematic AI-assisted intraday scanner through deterministic rules, risk controls, realistic backtesting and eventual paper validation. Profitability is unproven; negative results are retained.
 
-Current state: architecture, governance and specifications only. No trading application or integrations exist.
+Current state: Phase 1 offline foundation implemented. The repository contains typed identities,
+independent execution dimensions, fail-closed startup configuration, deterministic offline tests and
+a local health boundary. No scanner, strategy, broker, AI, portfolio or order execution exists.
 
 - [Project rules](docs/PROJECT_RULES.md) — authoritative governance.
 - [Agent instructions](AGENTS.md) — required entry point for future agents.
@@ -13,4 +15,19 @@ Current state: architecture, governance and specifications only. No trading appl
 
 Initial scope: long-only US equities/ETFs, 5-minute trend-pullback hypothesis, EUR 50-equivalent simulation, optional AI filtering behind deterministic risk controls. Live trading is not authorized.
 
-Architecture extension: independently configured trading agents, isolated capital, broker-agnostic execution, four strategy profiles, capital-efficiency and AI-cost accounting, frozen autonomous experiments, recovery and derived performance reporting. EUR50 is an initial virtual-capital profile, not an engine or API-budget limit. No agent, adapter, approval service, database, test suite or automatic trading has been implemented.
+Architecture extension: independently configured trading agents, isolated capital, broker-agnostic execution, four strategy profiles, capital-efficiency and AI-cost accounting, frozen autonomous experiments, recovery and derived performance reporting. EUR50 is an initial virtual-capital profile, not an engine or API-budget limit. These trading capabilities remain specifications.
+
+## Phase 1 local setup
+
+Install [uv](https://docs.astral.sh/uv/), then run:
+
+```powershell
+uv sync --locked --all-groups
+uv run --locked pytest
+uv run --locked ruff check .
+uv run --locked mypy
+uv run --locked ai-trading-scanner health
+```
+
+`uv` installs the pinned Python 3.13.15 runtime. The health command uses the bundled safe
+`SIMULATION + SIGNAL_ONLY` configuration and requires no credentials, network access or paid API.

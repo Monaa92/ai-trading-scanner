@@ -17,7 +17,7 @@ No single local computer or generated dashboard may be the sole copy of critical
 
 ## Consequences
 
-The current untracked docs are a declared critical gap. No paid service is introduced. Full readiness waits for a selected experiment store and tested restore.
+Current source, documentation, Phase 1 package, lockfile and tests are protected on `origin/main`; future authoritative telemetry remains the durability gap. No paid service is introduced. Full readiness waits for a selected experiment store and tested restore.
 
 ## Alternatives considered
 

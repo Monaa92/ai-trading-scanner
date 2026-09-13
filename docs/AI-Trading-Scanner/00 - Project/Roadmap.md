@@ -1,6 +1,6 @@
 # Gated roadmap
 
-Current work remains Phase 0 documentation only. A roadmap authorizes no implementation, account connection or trading. Keep the original sequence with explicit subphases for the multi-agent extension.
+Phase 1 offline foundation is complete. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task. Keep the original sequence with explicit subphases for the multi-agent extension.
 
 | Phase | Deliverable | Exit criterion |
 | --- | --- | --- |
@@ -29,4 +29,4 @@ Current work remains Phase 0 documentation only. A roadmap authorizes no impleme
 
 Autonomous paper experiments are controlled research after historical/paper validation. They do not advance operational live autonomy. The four profile names are hypotheses, not permission to invent missing parameters or activate unvalidated management. A deterministic-only program can skip AI phases, documenting that choice, then validate manual operation. Core accounting/audit/statistics begin before research, not postponed to Phase 10.
 
-Exact next milestone: **Phase 1 offline foundation only**. Verify/select supported Python and dependency tooling, create pinned package/lock/test layout, minimal FastAPI health endpoint and typed configuration validation for agent/account/allocation IDs, data/run mode, execution environment, submission mode, approval policy, context and disabled LIVE. Acceptance: reproducible install, offline tests reject invalid combinations/cross-scope config, require no broker credentials in SIMULATION, prove adapter registration cannot enable LIVE/CRYPTO and keep strategy/model identifiers separate. Do not implement workers, allocation ledger, approval service, indicators, risk/execution, broker connections, migrations, UI, deployment or trading in that milestone. No Phase 1 implementation occurs here.
+Exact next milestone: **Phase 2 historical data/calendar/quality foundation only**. Define and implement immutable market-data records, provenance, exchange-calendar/session semantics, availability timestamps, quality flags and small deterministic offline fixtures. Do not add strategy evaluation, risk, allocation, broker connections, order execution, AI calls, UI or deployment in that milestone.

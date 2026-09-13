@@ -1,6 +1,6 @@
 # AI Trading Scanner
 
-Architecture baseline: 2026-09-13. Purpose: test whether the strategy works, not prove that it works. No production system, accepted strategy or performance evidence exists yet.
+Architecture baseline: 2026-09-13. Phase 1 adds only an executable offline foundation. Purpose: test whether the strategy works, not prove that it works. No trading system, accepted strategy or performance evidence exists yet.
 
 Read [PROJECT_RULES](../../PROJECT_RULES.md) first. This folder is the Obsidian vault. Notes use the numbered project hierarchy; valid local Obsidian settings are preserved.
 
@@ -28,3 +28,7 @@ The initial development universe is not a historical point-in-time universe. All
 - [[10 - Archive/Reviews/Broker Economics and Recovery Extension Review]]: current extension inventory, readiness, checks and open questions.
 
 The vault folder was renamed in place to `AI-Trading-Scanner`; all 79 pre-rename files were hash-verified after the rename. The controlled numbered-folder migration then moved 84 notes with an unchanged 106-file content-hash multiset before link repair. All internal links were repaired and validated. Important non-secret Markdown and stable vault settings are included in the architecture/documentation foundation commit; machine-specific workspace state remains local. See [[07 - Operations/Disaster Recovery]].
+
+## Executable foundation
+
+Phase 1 implements Python 3.13.15 packaging, validated opaque IDs, the five independent execution dimensions, a bundled fail-closed configuration and local CLI/FastAPI health reporting. Startup rejects LIVE, ORDER_ENABLED and experiment execution. PAPER + FULL_AUTO remains representable in the domain/configuration model while paper order submission remains disabled. See [[07 - Operations/Setup]], [[07 - Operations/Configuration]] and [[06 - Testing/Test Strategy]].

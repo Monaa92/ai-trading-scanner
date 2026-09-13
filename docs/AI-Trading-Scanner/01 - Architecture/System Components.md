@@ -1,6 +1,6 @@
 # Backend architecture
 
-Status: design specification. Parent: [[01 - Architecture/System Architecture]]. Proposed module names are documentation, not created packages.
+Status: mostly design specification. Phase 1 implements only domain identities, execution dimensions, configuration validation and local health boundaries. Parent: [[01 - Architecture/System Architecture]]. Other proposed module names remain documentation, not created packages.
 
 ## Ownership and dependency direction
 

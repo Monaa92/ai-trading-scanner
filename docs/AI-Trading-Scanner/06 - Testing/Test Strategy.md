@@ -1,6 +1,8 @@
 # Testing strategy
 
-Specification only: no test suite or runtime is implemented in this pass. Future Python tests use pytest; property testing tooling is selected during foundation. Frontend unit tests and Playwright follow the dashboard phase. See [PROJECT_RULES](../../PROJECT_RULES.md) for merge gates.
+Status: Phase 1 pytest suite IMPLEMENTED for identities, execution dimensions, startup safety and health. Later trading, property, integration, replay and frontend tests below remain required future work. See [PROJECT_RULES](../../PROJECT_RULES.md) for merge gates.
+
+Phase 1 verification uses `uv run --locked pytest`, `uv run --locked ruff check .` and `uv run --locked mypy`. The initial suite has 111 deterministic offline tests and covers valid/malformed IDs, exact enum rejection, dimension independence, PAPER + FULL_AUTO representation, safe defaults, forbidden authority fields, disabled capability switches, redacted validation errors, non-fallback LIVE failure, CLI exit behavior and the in-memory FastAPI health route. It does not test trading behavior because none exists.
 
 ## Required evidence layers
 

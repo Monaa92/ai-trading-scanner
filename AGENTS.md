@@ -40,4 +40,4 @@ Read [docs/PROJECT_RULES.md](docs/PROJECT_RULES.md) before any modification. It 
 33. Reuse AI decisions across capital arms only with an explicit replay-equivalence proof; portfolio-dependent decisions require separate inference.
 34. Generated Obsidian reports are derived from authoritative structured experiment data and never replace it.
 
-Current phase: architecture and documentation only. No production implementation, migrations, dependencies, deployment, integrations, or trading automation belong in this initial pass. Future implementation requires a new scoped instruction. No strategy has been validated or accepted for trading.
+Current phase: Phase 1 offline foundation implemented. The only executable scope is typed identities, execution-dimension/configuration validation and local health reporting. No scanner, strategy, risk engine, portfolio, persistence, broker/AI integration, deployment or trading automation is implemented. No strategy has been validated or accepted for trading.

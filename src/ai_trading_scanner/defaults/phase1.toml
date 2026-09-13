@@ -1,0 +1,16 @@
+schema_version = "phase1-v1"
+configuration_version_id = "phase1-default-v1"
+
+[execution]
+data_run_mode = "HISTORICAL_REPLAY"
+execution_environment = "SIMULATION"
+submission_mode = "SIGNAL_ONLY"
+approval_policy = "MANUAL_APPROVAL"
+operating_context = "NORMAL"
+
+[safety]
+live_trading_enabled = false
+paper_order_submission_enabled = false
+broker_connections_enabled = false
+external_service_calls_enabled = false
+ai_inference_enabled = false
