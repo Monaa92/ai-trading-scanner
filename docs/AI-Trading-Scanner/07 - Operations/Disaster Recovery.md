@@ -29,4 +29,4 @@ Pre-commit classification covered every untracked file: 101 vault Markdown notes
 8. Verify all internal links, dataset identities, ledger/run manifests, Graphify integration and dashboard regeneration.
 9. Keep PAPER/LIVE disabled until their independent readiness gates and owner decisions.
 
-A fresh clone reconstructs the non-secret architecture, governance, Phase 1–2 executable foundation, synthetic fixtures and important Obsidian knowledge. Full disaster-recovery readiness still cannot be claimed: the phase that first creates authoritative external market or experiment data must choose a durable backup target and tested restore procedure without introducing a paid service by default.
+A fresh clone reconstructs the non-secret architecture, governance, Phase 1–3 executable foundations, synthetic fixtures and important Obsidian knowledge. Full disaster-recovery readiness still cannot be claimed: the phase that first creates authoritative external market or experiment data must choose a durable backup target and tested restore procedure without introducing a paid service by default.

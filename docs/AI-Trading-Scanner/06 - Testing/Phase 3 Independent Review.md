@@ -1,6 +1,18 @@
 # Phase 3 independent review
 
-Status: **INDEPENDENT COMPETENT HUMAN REVIEW REQUIRED; no approval is recorded.** Review the commit on `review/phase-3-indicators`. Do not merge until all critical findings are resolved and the exact reviewed commit is approved.
+Status: **APPROVED AND MERGED.**
+
+| Field | Recorded evidence |
+|---|---|
+| Reviewer | Dekkerszz |
+| Candidate commit | `c56df6918f5f8905906bc8c44c4142b4ef870e8a` |
+| Review outcome | GitHub review: APPROVED |
+| Pull request | #2, merged and closed |
+| Merge commit | `0cf049760e58da0a4bd8cd3a7688217a77265883` |
+| Merge time | 2026-09-13T20:48:21+02:00 |
+| Review branch | `review/phase-3-indicators`, deleted remotely after merge |
+
+The required independent competent human review is complete. The evidence above identifies the reviewed candidate, reviewer, approval, pull request and merge. The technical review matrix below remains the authoritative scope that was subject to review.
 
 | Area | Implementation | Behavioral evidence | Intended invariant | Failure impact |
 | --- | --- | --- | --- | --- |
@@ -18,10 +30,10 @@ Status: **INDEPENDENT COMPETENT HUMAN REVIEW REQUIRED; no approval is recorded.*
 | Configuration/output lineage | `indicators/models.py` | `test_indicator_config.py` | Strict immutable semantics and content ID; each point binds bar time/config and series binds dataset/slice. | Unreproducible feature values. |
 | Health boundary | `indicators/fixtures.py`, `health.py` | `test_health.py` | Four-formula fixture remains offline, fast, credential-free and broker-free. | Startup claims readiness without deterministic local evidence. |
 
-Reviewer should independently recompute the small fixtures, inspect reset transitions and unavailable reasons, mutate later bars to challenge prefix invariance, and confirm no scanner, strategy, risk, broker, AI or execution authority entered the change. Record reviewer identity, exact commit, approval outcome, PR, merge commit/date if merged, material findings and their resolution. Agent self-review is insufficient.
+The matrix records the required review scope: independent recomputation of small fixtures, reset transitions and unavailable reasons, later-bar mutations to challenge prefix invariance, and confirmation that no scanner, strategy, risk, broker, AI or execution authority entered the change. Agent self-review was not used as approval.
 
 ## Candidate verification
 
-Recorded 2026-09-13 before candidate commit: 219 total tests passed, comprising the established 171 Phase 1–2 regressions and 48 focused Phase 3 cases. Repository-wide Ruff lint/format, strict mypy, lock verification, package build, isolated wheel install, installed and source-tree offline health, secret signatures, whitespace, 32 ADR required-field checks and all 643 links across 103 Obsidian notes passed. The only pytest warning is an upstream Starlette `BlockingPortal` deprecation. No network, provider, broker or credential is required.
+Recorded for the reviewed candidate on 2026-09-13: 219 total tests passed, comprising the established 171 Phase 1–2 regressions and 48 focused Phase 3 cases. Repository-wide Ruff lint/format, strict mypy, lock verification, package build, isolated wheel install, installed and source-tree offline health, secret signatures, whitespace, 32 ADR required-field checks and all 643 links across 103 Obsidian notes passed. The only pytest warning is an upstream Starlette `BlockingPortal` deprecation. No network, provider, broker or credential is required.
 
-No approval, PR or merge is asserted by this note.
+No Phase 4 implementation is implied or authorized by this closure record.

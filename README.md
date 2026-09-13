@@ -2,8 +2,7 @@
 
 Private research project investigating a systematic AI-assisted intraday scanner through deterministic rules, risk controls, realistic backtesting and eventual paper validation. Profitability is unproven; negative results are retained.
 
-Current state: Phase 2 is complete on `main`; the Phase 3 deterministic-indicator candidate is on
-`review/phase-3-indicators` pending independent review. It adds typed exact-Decimal EMA, Wilder RSI,
+Current state: Phases 1–3 are complete on `main`. Phase 3 adds typed exact-Decimal EMA, Wilder RSI,
 Wilder ATR and session VWAP over canonical causal slices, with explicit warm-up, session/gap behavior,
 quality lineage and batch/incremental equivalence. No scanner, strategy, broker, AI, portfolio or order
 execution exists.

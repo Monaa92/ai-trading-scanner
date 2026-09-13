@@ -1,6 +1,6 @@
 # Deterministic indicator specification
 
-Status: **IMPLEMENTED ON `review/phase-3-indicators`; INDEPENDENT REVIEW PENDING.** The implementation is in `src/ai_trading_scanner/indicators`. It consumes only immutable `MarketDataSlice` inputs, emits one typed point per input bar, and carries dataset/slice/configuration lineage plus visible Phase 2 quality findings.
+Status: **IMPLEMENTED AND MERGED TO `main`; INDEPENDENT REVIEW COMPLETE.** The implementation is in `src/ai_trading_scanner/indicators`. It consumes only immutable `MarketDataSlice` inputs, emits one typed point per input bar, and carries dataset/slice/configuration lineage plus visible Phase 2 quality findings. Review evidence is recorded in [[06 - Testing/Phase 3 Independent Review]].
 
 All formulas below are implementation contracts, not evidence of predictive value. Input is ordered, validated, completed RTH bars of one instrument, feed and price basis. Output carries implementation/parameter version, dataset and slice hashes, latest `available_at`, value and `ready/reason`. Missing values are `null` with typed reasons, never JSON NaN or zero substitution. V1 uses a local 34-significant-digit `Decimal` context with round-half-even for authoritative indicator arithmetic; it does not depend on the process-global Decimal context or binary floating point.
 

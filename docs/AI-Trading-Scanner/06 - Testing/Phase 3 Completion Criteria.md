@@ -2,9 +2,9 @@
 
 Assessment date: 2026-09-13. Evidence inspected: repository tree, Phase 1–2 source/tests/manifests, documentation and Git state.
 
-This note predates the gated roadmap’s narrower Phase 3 indicator milestone. It remains the later full-experiment technical gate and must not be used to describe the indicator foundation as incomplete. The Phase 3 indicator candidate and its review evidence are tracked in [[02 - Agents & Strategies/Shared Agent Rules/Indicators]] and [[06 - Testing/Phase 3 Independent Review]].
+This note predates the gated roadmap’s narrower Phase 3 indicator milestone. It remains the later full-experiment technical gate and must not be used to describe the completed indicator foundation as incomplete. The completed Phase 3 indicator implementation and its review evidence are tracked in [[02 - Agents & Strategies/Shared Agent Rules/Indicators]] and [[06 - Testing/Phase 3 Independent Review]].
 
-**FULL EXPERIMENT STATUS: NOT READY FOR TESTING.** The repository has an executable offline Phase 1–2 foundation and a Phase 3 indicator review candidate, but it has no experiment runner, scanner, four-agent interface, broker simulation, portfolio/risk/accounting, authoritative persistence or completed experiment. An indicator-foundation test is not end-to-end experiment evidence.
+**FULL EXPERIMENT STATUS: NOT READY FOR TESTING.** The repository has executable offline Phase 1–3 foundations, but it has no experiment runner, scanner, four-agent interface, broker simulation, portfolio/risk/accounting, authoritative persistence or completed experiment. An indicator-foundation test is not end-to-end experiment evidence.
 
 | Completion criterion | Classification | Repository evidence / gap |
 | --- | --- | --- |
@@ -26,4 +26,4 @@ This note predates the gated roadmap’s narrower Phase 3 indicator milestone. I
 | 16. No secrets, credentials or external dependency for simulation | PARTIAL | Foundation health/tests run offline without credentials; no SimulationBroker exists. |
 | 17. Documented one-command test/experiment entry | PARTIAL | Locked test and health commands exist; no experiment command exists. |
 
-No placeholder, TODO or stub is reported as completed production implementation. IBKR and Kraken are future adapter specifications. Simulation is the only current experiment environment but its adapter still must be built. Phase 1 and Phase 2 are complete; the deterministic indicator candidate awaits independent review, followed by the remaining gated sequence in [[00 - Project/Roadmap]].
+No placeholder, TODO or stub is reported as completed production implementation. IBKR and Kraken are future adapter specifications. Simulation is the only current experiment environment but its adapter still must be built. Phases 1–3 are complete; the remaining gated sequence is in [[00 - Project/Roadmap]].

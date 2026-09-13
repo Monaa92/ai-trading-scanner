@@ -1,6 +1,6 @@
 # Testing strategy
 
-Status: Phase 1–2 suites are complete on `main`. The Phase 3 review candidate adds 48 focused indicator cases; independent review remains required before merge. Trading, full replay, portfolio/risk and frontend tests remain future work. See [PROJECT_RULES](../../PROJECT_RULES.md) and [[06 - Testing/Phase 3 Independent Review]].
+Status: Phase 1–3 suites are complete on `main`. Phase 3 adds 48 focused indicator cases and received the required independent review before merge. Trading, full replay, portfolio/risk and frontend tests remain future work. See [PROJECT_RULES](../../PROJECT_RULES.md) and [[06 - Testing/Phase 3 Independent Review]].
 
 The initial 111 Phase 1 cases remain regression coverage for valid/malformed IDs, exact enum rejection, dimension independence, PAPER + FULL_AUTO representation, safe defaults, forbidden authority fields, disabled capability switches, redacted validation errors, non-fallback LIVE failure, CLI exit behavior and the in-memory FastAPI health route.
 
