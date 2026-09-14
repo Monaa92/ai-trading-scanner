@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
+from decimal import Decimal
 from threading import RLock
 
 from ai_trading_scanner.domain import (
@@ -20,6 +21,7 @@ from ai_trading_scanner.risk.models import (
     AllocationSnapshot,
     ApprovalBinding,
     CapitalReservation,
+    LossStateSnapshot,
     ParentCapitalSnapshot,
     ReservationAttempt,
     ReservationAttemptStatus,
@@ -34,6 +36,7 @@ from ai_trading_scanner.risk.models import (
     SafetyLockScope,
     SafetyStateSnapshot,
     calculate_reservation_id,
+    create_safety_state,
 )
 from ai_trading_scanner.strategies import TradeProposal
 
@@ -52,29 +55,63 @@ class InMemoryCapitalCoordinator:
     def __init__(self, risk_engine: RiskEngine | None = None) -> None:
         self._risk_engine = risk_engine or RiskEngine()
         self._registry_lock = RLock()
+        self._proposal_locks: dict[TradeProposalId, RLock] = {}
         self._parents: dict[AccountId, ParentCapitalSnapshot] = {}
         self._allocations: dict[AllocationId, AllocationSnapshot] = {}
+        self._parent_loss_states: dict[AccountId, LossStateSnapshot] = {}
+        self._allocation_loss_states: dict[AllocationId, LossStateSnapshot] = {}
         self._parent_locks: dict[AccountId, RLock] = {}
         self._allocation_locks: dict[AllocationId, RLock] = {}
         self._reservations: dict[ReservationId, CapitalReservation] = {}
-        self._proposal_reservations: dict[tuple[AllocationId, TradeProposalId], ReservationId] = {}
-        self._safety_locks: dict[SafetyLockId, SafetyLock] = {}
+        self._reservations_by_account: dict[AccountId, dict[ReservationId, CapitalReservation]] = {}
+        self._risk_decisions: dict[ReservationId, RiskDecision] = {}
+        self._proposal_reservations: dict[TradeProposalId, ReservationId] = {}
+        self._safety_locks: dict[AccountId, dict[SafetyLockId, SafetyLock]] = {}
 
-    def register_parent(self, snapshot: ParentCapitalSnapshot) -> None:
+    def register_parent(
+        self, snapshot: ParentCapitalSnapshot, loss_state: LossStateSnapshot
+    ) -> None:
         with self._registry_lock:
             if snapshot.account_id in self._parents:
                 raise DuplicateCapitalScopeError("parent account is already registered")
             self._parents[snapshot.account_id] = snapshot
+            self._parent_loss_states[snapshot.account_id] = loss_state
             self._parent_locks[snapshot.account_id] = RLock()
+            self._reservations_by_account[snapshot.account_id] = {}
+            self._safety_locks[snapshot.account_id] = {}
 
-    def register_allocation(self, snapshot: AllocationSnapshot) -> None:
+    def register_allocation(
+        self, snapshot: AllocationSnapshot, loss_state: LossStateSnapshot
+    ) -> None:
         with self._registry_lock:
             if snapshot.account_id not in self._parents:
                 raise UnknownCapitalScopeError("parent account is not registered")
             if snapshot.allocation_id in self._allocations:
                 raise DuplicateCapitalScopeError("allocation is already registered")
             self._allocations[snapshot.allocation_id] = snapshot
+            self._allocation_loss_states[snapshot.allocation_id] = loss_state
             self._allocation_locks[snapshot.allocation_id] = RLock()
+
+    def update_parent_loss_state(
+        self, account_id: AccountId, loss_state: LossStateSnapshot
+    ) -> None:
+        """Replace external parent loss evidence with a strictly newer revision."""
+        with self._parent_lock(account_id):
+            current = self._parent_loss_state(account_id)
+            if loss_state.revision <= current.revision:
+                raise ReservationTransitionError("parent loss-state revision must increase")
+            self._parent_loss_states[account_id] = loss_state
+
+    def update_allocation_loss_state(
+        self, allocation_id: AllocationId, loss_state: LossStateSnapshot
+    ) -> None:
+        """Replace external agent loss evidence with a strictly newer revision."""
+        allocation = self._allocation(allocation_id)
+        with self._scope_locks(allocation.account_id, allocation_id):
+            current = self._allocation_loss_state(allocation_id)
+            if loss_state.revision <= current.revision:
+                raise ReservationTransitionError("allocation loss-state revision must increase")
+            self._allocation_loss_states[allocation_id] = loss_state
 
     def parent_snapshot(self, account_id: AccountId) -> ParentCapitalSnapshot:
         with self._parent_lock(account_id):
@@ -98,17 +135,19 @@ class InMemoryCapitalCoordinator:
             return self._evaluation_state(account_id, allocation_id)
 
     def reservation(self, reservation_id: ReservationId) -> CapitalReservation:
-        existing = self._reservations.get(reservation_id)
-        if existing is None:
-            raise UnknownCapitalScopeError("reservation is not registered")
-        with self._scope_locks(existing.account_id, existing.allocation_id):
+        existing = self._reservation(reservation_id)
+        with (
+            self._proposal_guard(existing.proposal_id),
+            self._scope_locks(existing.account_id, existing.allocation_id),
+        ):
             return self._reservation(reservation_id)
 
     def activate_lock(self, lock: SafetyLock) -> SafetyLock:
         if lock.scope is SafetyLockScope.PARENT_ACCOUNT:
             with self._parent_lock(lock.account_id):
-                self._safety_locks.setdefault(lock.lock_id, lock)
-                return self._safety_locks[lock.lock_id]
+                locks = self._account_safety_locks(lock.account_id)
+                locks.setdefault(lock.lock_id, lock)
+                return locks[lock.lock_id]
         if lock.allocation_id is None:
             raise ReservationTransitionError("scoped lock requires allocation identity")
         with self._scope_locks(lock.account_id, lock.allocation_id):
@@ -117,8 +156,9 @@ class InMemoryCapitalCoordinator:
                 raise ReservationTransitionError("lock allocation belongs to another account")
             if lock.scope is SafetyLockScope.AGENT and allocation.agent_id != lock.agent_id:
                 raise ReservationTransitionError("lock agent differs from allocation owner")
-            self._safety_locks.setdefault(lock.lock_id, lock)
-            return self._safety_locks[lock.lock_id]
+            locks = self._account_safety_locks(lock.account_id)
+            locks.setdefault(lock.lock_id, lock)
+            return locks[lock.lock_id]
 
     def reserve(
         self,
@@ -132,7 +172,12 @@ class InMemoryCapitalCoordinator:
         approval_binding: ApprovalBinding | None = None,
     ) -> ReservationAttempt:
         """Atomically revalidate and reserve both parent and allocation capacity."""
-        with self._scope_locks(account_id, allocation_id):
+        if evaluated_at.tzinfo is None or evaluated_at.utcoffset() is None:
+            raise ValueError("evaluation time must be timezone-aware")
+        with (
+            self._proposal_guard(proposal.proposal_id),
+            self._scope_locks(account_id, allocation_id),
+        ):
             state = self._evaluation_state(account_id, allocation_id)
             mismatch = self._preliminary_mismatch_reasons(
                 proposal,
@@ -153,11 +198,45 @@ class InMemoryCapitalCoordinator:
                     risk_decision=rejected,
                 )
 
-            key = (allocation_id, proposal.proposal_id)
-            existing_id = self._proposal_reservations.get(key)
+            with self._registry_lock:
+                existing_id = self._proposal_reservations.get(proposal.proposal_id)
             if existing_id is not None:
                 existing = self._reservation(existing_id)
+                if (
+                    existing.account_id != account_id
+                    or existing.allocation_id != allocation_id
+                    or existing.agent_id != proposal.agent_id
+                ):
+                    rejected = self._risk_engine.rejection(
+                        proposal,
+                        configuration,
+                        state,
+                        evaluated_at=evaluated_at,
+                        reasons={RiskRejectionCode.OWNERSHIP_MISMATCH},
+                    )
+                    return ReservationAttempt(
+                        status=ReservationAttemptStatus.REJECTED,
+                        risk_decision=rejected,
+                    )
                 if existing.state is ReservationState.ACTIVE:
+                    if evaluated_at >= existing.expires_at:
+                        self._transition_locked(
+                            existing,
+                            target=ReservationState.EXPIRED,
+                            transitioned_at=evaluated_at,
+                        )
+                        expired_state = self._evaluation_state(account_id, allocation_id)
+                        rejected = self._risk_engine.rejection(
+                            proposal,
+                            configuration,
+                            expired_state,
+                            evaluated_at=evaluated_at,
+                            reasons={RiskRejectionCode.EXPIRED_PROPOSAL},
+                        )
+                        return ReservationAttempt(
+                            status=ReservationAttemptStatus.REJECTED,
+                            risk_decision=rejected,
+                        )
                     if existing.risk_decision_id != preliminary_decision.risk_decision_id:
                         rejected = self._risk_engine.rejection(
                             proposal,
@@ -170,9 +249,41 @@ class InMemoryCapitalCoordinator:
                             status=ReservationAttemptStatus.REJECTED,
                             risk_decision=rejected,
                         )
+                    replay_state = self._evaluation_state_excluding(existing)
+                    replay_decision = self._risk_engine.evaluate_for_reservation(
+                        proposal,
+                        configuration,
+                        replay_state,
+                        evaluated_at=evaluated_at,
+                        approval_binding=approval_binding,
+                    )
+                    with self._registry_lock:
+                        original_decision = self._risk_decisions[existing.reservation_id]
+                    if replay_decision.status is RiskDecisionStatus.REJECTED:
+                        return ReservationAttempt(
+                            status=ReservationAttemptStatus.REJECTED,
+                            risk_decision=replay_decision,
+                        )
+                    if (
+                        replay_decision.sizing_decision is None
+                        or original_decision.sizing_decision is None
+                        or replay_decision.sizing_decision.sizing_decision_id
+                        != original_decision.sizing_decision.sizing_decision_id
+                    ):
+                        rejected = self._risk_engine.rejection(
+                            proposal,
+                            configuration,
+                            replay_state,
+                            evaluated_at=evaluated_at,
+                            reasons={RiskRejectionCode.PRELIMINARY_DECISION_MISMATCH},
+                        )
+                        return ReservationAttempt(
+                            status=ReservationAttemptStatus.REJECTED,
+                            risk_decision=rejected,
+                        )
                     return ReservationAttempt(
                         status=ReservationAttemptStatus.RESERVED,
-                        risk_decision=preliminary_decision,
+                        risk_decision=original_decision,
                         reservation=existing,
                         idempotent_replay=True,
                     )
@@ -203,7 +314,7 @@ class InMemoryCapitalCoordinator:
             sizing = final_decision.sizing_decision
             assert sizing is not None
             content: dict[str, object] = {
-                "schema_version": "capital-reservation-v1",
+                "schema_version": "capital-reservation-v2",
                 "proposal_id": proposal.proposal_id,
                 "risk_decision_id": final_decision.risk_decision_id,
                 "sizing_decision_id": sizing.sizing_decision_id,
@@ -213,6 +324,7 @@ class InMemoryCapitalCoordinator:
                 "agent_id": proposal.agent_id,
                 "instrument_id": proposal.instrument_id,
                 "reserved_amount": sizing.reservation_amount,
+                "reserved_downside": sizing.modeled_risk_amount,
                 "approved_quantity": sizing.quantity,
                 "currency": sizing.currency,
                 "authority_context": proposal.authority_context.execution_dimensions,
@@ -252,8 +364,11 @@ class InMemoryCapitalCoordinator:
 
             self._parents[account_id] = new_parent
             self._allocations[allocation_id] = new_allocation
-            self._reservations[reservation.reservation_id] = reservation
-            self._proposal_reservations[key] = reservation.reservation_id
+            self._reservations_by_account[account_id][reservation.reservation_id] = reservation
+            with self._registry_lock:
+                self._reservations[reservation.reservation_id] = reservation
+                self._risk_decisions[reservation.reservation_id] = final_decision
+                self._proposal_reservations[proposal.proposal_id] = reservation.reservation_id
             return ReservationAttempt(
                 status=ReservationAttemptStatus.RESERVED,
                 risk_decision=final_decision,
@@ -325,63 +440,110 @@ class InMemoryCapitalCoordinator:
         transitioned_at: datetime,
     ) -> CapitalReservation:
         existing = self._reservation(reservation_id)
-        with self._scope_locks(existing.account_id, existing.allocation_id):
-            current = self._reservation(reservation_id)
-            if (
-                current.account_id != account_id
-                or current.allocation_id != allocation_id
-                or current.agent_id != agent_id
-            ):
-                raise ReservationTransitionError("reservation ownership mismatch")
-            if current.state is target:
-                return current
-            if current.state is not ReservationState.ACTIVE:
-                raise ReservationTransitionError(
-                    f"cannot transition {current.state.value} reservation to {target.value}"
-                )
-            if target is ReservationState.EXPIRED and transitioned_at < current.expires_at:
-                raise ReservationTransitionError("active reservation has not expired")
+        with (
+            self._proposal_guard(existing.proposal_id),
+            self._scope_locks(existing.account_id, existing.allocation_id),
+        ):
+            return self._transition_checked(
+                existing,
+                target=target,
+                account_id=account_id,
+                allocation_id=allocation_id,
+                agent_id=agent_id,
+                transitioned_at=transitioned_at,
+            )
 
-            parent = self._parent(account_id)
-            allocation = self._allocation(allocation_id)
-            amount = current.reserved_amount
-            parent_update: dict[str, object] = {
-                "active_reserved_capital": parent.active_reserved_capital - amount,
-                "revision": parent.revision + 1,
+    def _transition_checked(
+        self,
+        existing: CapitalReservation,
+        *,
+        target: ReservationState,
+        account_id: AccountId,
+        allocation_id: AllocationId,
+        agent_id: AgentId,
+        transitioned_at: datetime,
+    ) -> CapitalReservation:
+        if transitioned_at.tzinfo is None or transitioned_at.utcoffset() is None:
+            raise ReservationTransitionError("transition time must be timezone-aware")
+        current = self._reservation(existing.reservation_id)
+        if (
+            current.account_id != account_id
+            or current.allocation_id != allocation_id
+            or current.agent_id != agent_id
+        ):
+            raise ReservationTransitionError("reservation ownership mismatch")
+        if current.state is target:
+            return current
+        if current.state is not ReservationState.ACTIVE:
+            raise ReservationTransitionError(
+                f"cannot transition {current.state.value} reservation to {target.value}"
+            )
+        if target is ReservationState.EXPIRED and transitioned_at < current.expires_at:
+            raise ReservationTransitionError("active reservation has not expired")
+        if target is ReservationState.CONSUMED and transitioned_at >= current.expires_at:
+            self._transition_locked(
+                current,
+                target=ReservationState.EXPIRED,
+                transitioned_at=transitioned_at,
+            )
+            raise ReservationTransitionError("expired reservation cannot be consumed")
+        return self._transition_locked(
+            current,
+            target=target,
+            transitioned_at=transitioned_at,
+        )
+
+    def _transition_locked(
+        self,
+        current: CapitalReservation,
+        *,
+        target: ReservationState,
+        transitioned_at: datetime,
+    ) -> CapitalReservation:
+        account_id = current.account_id
+        allocation_id = current.allocation_id
+        parent = self._parent(account_id)
+        allocation = self._allocation(allocation_id)
+        amount = current.reserved_amount
+        parent_update: dict[str, object] = {
+            "active_reserved_capital": parent.active_reserved_capital - amount,
+            "revision": parent.revision + 1,
+        }
+        allocation_update: dict[str, object] = {
+            "active_reserved_capital": allocation.active_reserved_capital - amount,
+            "active_reservation_count": allocation.active_reservation_count - 1,
+            "revision": allocation.revision + 1,
+        }
+        if target is ReservationState.CONSUMED:
+            parent_update["committed_capital"] = parent.committed_capital + amount
+            allocation_update["committed_capital"] = allocation.committed_capital + amount
+            allocation_update["instrument_committed_capital"] = (
+                allocation.instrument_committed_capital + amount
+            )
+        else:
+            parent_update["available_capital"] = parent.available_capital + amount
+            allocation_update["available_capital"] = allocation.available_capital + amount
+
+        transitioned = CapitalReservation.model_validate(
+            {
+                **current.model_dump(mode="python"),
+                "state": target,
+                "transitioned_at": transitioned_at,
             }
-            allocation_update: dict[str, object] = {
-                "active_reserved_capital": allocation.active_reserved_capital - amount,
-                "active_reservation_count": allocation.active_reservation_count - 1,
-                "revision": allocation.revision + 1,
-            }
-            if target is ReservationState.CONSUMED:
-                parent_update["committed_capital"] = parent.committed_capital + amount
-                allocation_update["committed_capital"] = allocation.committed_capital + amount
-                allocation_update["instrument_committed_capital"] = (
-                    allocation.instrument_committed_capital + amount
-                )
-            else:
-                parent_update["available_capital"] = parent.available_capital + amount
-                allocation_update["available_capital"] = allocation.available_capital + amount
+        )
+        new_parent = ParentCapitalSnapshot.model_validate(
+            {**parent.model_dump(mode="python"), **parent_update}
+        )
+        new_allocation = AllocationSnapshot.model_validate(
+            {**allocation.model_dump(mode="python"), **allocation_update}
+        )
 
-            transitioned = CapitalReservation.model_validate(
-                {
-                    **current.model_dump(mode="python"),
-                    "state": target,
-                    "transitioned_at": transitioned_at,
-                }
-            )
-            new_parent = ParentCapitalSnapshot.model_validate(
-                {**parent.model_dump(mode="python"), **parent_update}
-            )
-            new_allocation = AllocationSnapshot.model_validate(
-                {**allocation.model_dump(mode="python"), **allocation_update}
-            )
-
-            self._parents[account_id] = new_parent
-            self._allocations[allocation_id] = new_allocation
-            self._reservations[reservation_id] = transitioned
-            return transitioned
+        self._parents[account_id] = new_parent
+        self._allocations[allocation_id] = new_allocation
+        self._reservations_by_account[account_id][current.reservation_id] = transitioned
+        with self._registry_lock:
+            self._reservations[current.reservation_id] = transitioned
+        return transitioned
 
     def _preliminary_mismatch_reasons(
         self,
@@ -410,17 +572,66 @@ class InMemoryCapitalCoordinator:
             safety=self._safety_snapshot(account_id, allocation_id),
         )
 
+    def _evaluation_state_excluding(self, reservation: CapitalReservation) -> RiskEvaluationState:
+        parent = self._parent(reservation.account_id)
+        allocation = self._allocation(reservation.allocation_id)
+        amount = reservation.reserved_amount
+        adjusted_parent = ParentCapitalSnapshot.model_validate(
+            {
+                **parent.model_dump(mode="python"),
+                "available_capital": parent.available_capital + amount,
+                "active_reserved_capital": parent.active_reserved_capital - amount,
+            }
+        )
+        adjusted_allocation = AllocationSnapshot.model_validate(
+            {
+                **allocation.model_dump(mode="python"),
+                "available_capital": allocation.available_capital + amount,
+                "active_reserved_capital": allocation.active_reserved_capital - amount,
+                "active_reservation_count": allocation.active_reservation_count - 1,
+            }
+        )
+        return RiskEvaluationState(
+            parent=adjusted_parent,
+            allocation=adjusted_allocation,
+            safety=self._safety_snapshot(
+                reservation.account_id,
+                reservation.allocation_id,
+                exclude_reservation_id=reservation.reservation_id,
+            ),
+        )
+
     def _safety_snapshot(
-        self, account_id: AccountId, allocation_id: AllocationId
+        self,
+        account_id: AccountId,
+        allocation_id: AllocationId,
+        *,
+        exclude_reservation_id: ReservationId | None = None,
     ) -> SafetyStateSnapshot:
         allocation = self._allocation(allocation_id)
+        reservations = tuple(
+            reservation
+            for reservation in self._reservations_by_account[account_id].values()
+            if reservation.reservation_id != exclude_reservation_id
+            and reservation.state in {ReservationState.ACTIVE, ReservationState.CONSUMED}
+        )
+        agent_downside = sum(
+            (
+                reservation.reserved_downside
+                for reservation in reservations
+                if reservation.allocation_id == allocation_id
+            ),
+            Decimal(0),
+        )
+        parent_downside = sum(
+            (reservation.reserved_downside for reservation in reservations), Decimal(0)
+        )
         applicable = tuple(
             sorted(
                 (
                     lock
-                    for lock in self._safety_locks.values()
-                    if lock.account_id == account_id
-                    and (
+                    for lock in self._account_safety_locks(account_id).values()
+                    if (
                         lock.scope is SafetyLockScope.PARENT_ACCOUNT
                         or lock.allocation_id == allocation_id
                         or (
@@ -432,7 +643,31 @@ class InMemoryCapitalCoordinator:
                 key=lambda item: str(item.lock_id),
             )
         )
-        return SafetyStateSnapshot(active_locks=applicable)
+        return create_safety_state(
+            agent_loss_state=self._allocation_loss_state(allocation_id),
+            parent_loss_state=self._parent_loss_state(account_id),
+            agent_outstanding_downside=agent_downside,
+            parent_outstanding_downside=parent_downside,
+            active_locks=applicable,
+        )
+
+    def _parent_loss_state(self, account_id: AccountId) -> LossStateSnapshot:
+        try:
+            return self._parent_loss_states[account_id]
+        except KeyError as error:
+            raise UnknownCapitalScopeError("parent loss state is not registered") from error
+
+    def _allocation_loss_state(self, allocation_id: AllocationId) -> LossStateSnapshot:
+        try:
+            return self._allocation_loss_states[allocation_id]
+        except KeyError as error:
+            raise UnknownCapitalScopeError("allocation loss state is not registered") from error
+
+    def _account_safety_locks(self, account_id: AccountId) -> dict[SafetyLockId, SafetyLock]:
+        try:
+            return self._safety_locks[account_id]
+        except KeyError as error:
+            raise UnknownCapitalScopeError("parent account is not registered") from error
 
     def _parent(self, account_id: AccountId) -> ParentCapitalSnapshot:
         try:
@@ -447,10 +682,18 @@ class InMemoryCapitalCoordinator:
             raise UnknownCapitalScopeError("allocation is not registered") from error
 
     def _reservation(self, reservation_id: ReservationId) -> CapitalReservation:
-        try:
-            return self._reservations[reservation_id]
-        except KeyError as error:
-            raise UnknownCapitalScopeError("reservation is not registered") from error
+        with self._registry_lock:
+            try:
+                return self._reservations[reservation_id]
+            except KeyError as error:
+                raise UnknownCapitalScopeError("reservation is not registered") from error
+
+    @contextmanager
+    def _proposal_guard(self, proposal_id: TradeProposalId) -> Iterator[None]:
+        with self._registry_lock:
+            lock = self._proposal_locks.setdefault(proposal_id, RLock())
+        with lock:
+            yield
 
     @contextmanager
     def _parent_lock(self, account_id: AccountId) -> Iterator[None]:

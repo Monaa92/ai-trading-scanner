@@ -34,6 +34,31 @@ def _floor_to_increment(value: Decimal, increment: Decimal) -> Decimal:
         return units * increment
 
 
+def _loss_capacity(
+    configuration: RiskConfiguration,
+    state: RiskEvaluationState,
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    """Return agent/parent ceilings and remaining headroom under canonical V1 math."""
+    agent = state.safety.agent_loss_state
+    parent = state.safety.parent_loss_state
+    with localcontext(_DECIMAL_CONTEXT):
+        agent_ceiling = configuration.max_agent_drawdown_fraction * min(
+            agent.session_start_equity, agent.eligible_current_equity
+        )
+        parent_ceiling = configuration.max_parent_drawdown_fraction * min(
+            parent.session_start_equity, parent.eligible_current_equity
+        )
+        agent_remaining = max(
+            Decimal(0),
+            agent_ceiling - agent.current_loss - state.safety.agent_outstanding_downside,
+        )
+        parent_remaining = max(
+            Decimal(0),
+            parent_ceiling - parent.current_loss - state.safety.parent_outstanding_downside,
+        )
+    return agent_ceiling, parent_ceiling, agent_remaining, parent_remaining
+
+
 class RiskEngine:
     """Evaluate immutable proposals without I/O or state mutation."""
 
@@ -191,11 +216,12 @@ class RiskEngine:
             ):
                 reasons.add(RiskRejectionCode.TRADING_LOCK)
         if (
-            state.safety.agent_loss_breached
-            or state.safety.parent_loss_breached
-            or state.safety.agent_drawdown_fraction >= configuration.max_agent_drawdown_fraction
-            or state.safety.parent_drawdown_fraction >= configuration.max_parent_drawdown_fraction
+            state.safety.agent_loss_state.loss_breached
+            or state.safety.parent_loss_state.loss_breached
         ):
+            reasons.add(RiskRejectionCode.DRAWDOWN_LOCK)
+        _, _, agent_remaining, parent_remaining = _loss_capacity(configuration, state)
+        if agent_remaining <= 0 or parent_remaining <= 0:
             reasons.add(RiskRejectionCode.DRAWDOWN_LOCK)
         if allocation.active_reservation_count >= configuration.max_concurrent_reservations:
             reasons.add(RiskRejectionCode.RESERVATION_CAPACITY_UNAVAILABLE)
@@ -218,9 +244,14 @@ class RiskEngine:
                 return None, {RiskRejectionCode.INVALID_STOP_GEOMETRY}
             cost_return = proposal.economics.cost_estimate.total_return_drag
             unit_modeled_loss = unit_risk + entry * cost_return
-            risk_budget = allocation.allocated_capital * configuration.max_risk_fraction
+            _, _, agent_loss_headroom, parent_loss_headroom = _loss_capacity(configuration, state)
+            risk_budget = (
+                state.safety.agent_loss_state.eligible_current_equity
+                * configuration.max_risk_fraction
+            )
             if configuration.max_monetary_risk is not None:
                 risk_budget = min(risk_budget, configuration.max_monetary_risk)
+            risk_budget = min(risk_budget, agent_loss_headroom, parent_loss_headroom)
 
             cash_per_unit = entry * (Decimal(1) + cost_return)
             position_headroom = allocation.allocated_capital * (configuration.max_position_fraction)
@@ -292,7 +323,7 @@ class RiskEngine:
             modeled_risk = quantity * unit_modeled_loss
             reservation_amount = quantity * cash_per_unit
             content: dict[str, object] = {
-                "schema_version": "sizing-decision-v1",
+                "schema_version": "sizing-decision-v2",
                 "proposal_id": proposal.proposal_id,
                 "risk_configuration_id": configuration.risk_configuration_id,
                 "account_id": parent.account_id,
@@ -303,7 +334,9 @@ class RiskEngine:
                 "entry_price": entry,
                 "stop_price": stop,
                 "unit_risk": unit_risk,
+                "round_trip_cost_return": cost_return,
                 "unit_modeled_loss": unit_modeled_loss,
+                "cash_per_unit": cash_per_unit,
                 "allowed_risk_amount": risk_budget,
                 "modeled_risk_amount": modeled_risk,
                 "reservation_amount": reservation_amount,
@@ -366,9 +399,19 @@ class RiskEngine:
                 state.allocation.committed_capital + state.allocation.active_reserved_capital
             ),
             active_reservation_count=state.allocation.active_reservation_count,
+            agent_eligible_current_equity=(state.safety.agent_loss_state.eligible_current_equity),
+            parent_eligible_current_equity=(state.safety.parent_loss_state.eligible_current_equity),
+            agent_daily_loss_ceiling=_loss_capacity(configuration, state)[0],
+            parent_daily_loss_ceiling=_loss_capacity(configuration, state)[1],
+            agent_current_loss=state.safety.agent_loss_state.current_loss,
+            parent_current_loss=state.safety.parent_loss_state.current_loss,
+            agent_outstanding_downside=state.safety.agent_outstanding_downside,
+            parent_outstanding_downside=state.safety.parent_outstanding_downside,
+            agent_remaining_loss_headroom=_loss_capacity(configuration, state)[2],
+            parent_remaining_loss_headroom=_loss_capacity(configuration, state)[3],
         )
         content: dict[str, object] = {
-            "schema_version": "risk-decision-v1",
+            "schema_version": "risk-decision-v2",
             "status": status,
             "reason_codes": reasons,
             "proposal_id": proposal.proposal_id,
@@ -378,6 +421,7 @@ class RiskEngine:
             "risk_configuration_id": configuration.risk_configuration_id,
             "evaluated_at": evaluated_at,
             "evaluated_limits": limits,
+            "evaluated_safety_state": state.safety,
             "sizing_decision": sizing,
         }
         return RiskDecision(

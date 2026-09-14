@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
@@ -16,11 +16,13 @@ from ai_trading_scanner.domain import (
     ApprovalBindingId,
     ConfigurationVersionId,
     InstrumentId,
+    LossStateId,
     ManagementMandateId,
     ReservationId,
     RiskConfigurationId,
     RiskDecisionId,
     SafetyLockId,
+    SafetyStateId,
     SizingDecisionId,
     TradeProposalId,
 )
@@ -42,6 +44,9 @@ def _content_without_id(value: BaseModel | dict[str, object], field: str) -> dic
     if isinstance(value, BaseModel):
         return value.model_dump(mode="python", exclude={field})
     return {key: item for key, item in value.items() if key != field}
+
+
+_DECIMAL_CONTEXT = Context(prec=34)
 
 
 class RiskPolicyStatus(StrEnum):
@@ -311,33 +316,135 @@ def create_safety_lock(
     )
 
 
-class SafetyStateSnapshot(BaseModel):
-    """Externally supplied safety state; it does not pretend to calculate P&L."""
+class LossStateSnapshot(BaseModel):
+    """Externally calculated current-equity and daily-loss evidence for one scope."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    active_locks: tuple[SafetyLock, ...] = ()
-    agent_drawdown_fraction: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)] = Decimal(0)
-    parent_drawdown_fraction: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)] = Decimal(0)
-    agent_loss_breached: bool = False
-    parent_loss_breached: bool = False
+    loss_state_id: LossStateId
+    schema_version: Literal["loss-state-v1"] = "loss-state-v1"
+    eligible_current_equity: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    session_start_equity: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+    current_loss: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    loss_breached: bool = False
+    revision: Annotated[int, Field(ge=0)] = 0
 
     @model_validator(mode="before")
     @classmethod
     def reject_float_values(cls, data: object) -> object:
         if isinstance(data, dict) and any(
             isinstance(data.get(field), float)
-            for field in ("agent_drawdown_fraction", "parent_drawdown_fraction")
+            for field in (
+                "eligible_current_equity",
+                "session_start_equity",
+                "current_loss",
+            )
         ):
-            raise ValueError("drawdown values must not use float")
+            raise ValueError("loss-state financial values must not use float")
         return data
 
     @model_validator(mode="after")
-    def validate_locks(self) -> Self:
+    def validate_loss_state(self) -> Self:
+        with localcontext(_DECIMAL_CONTEXT):
+            expected_loss = max(
+                Decimal(0), self.session_start_equity - self.eligible_current_equity
+            )
+        if self.current_loss != expected_loss:
+            raise ValueError("current loss must equal session-start minus eligible equity")
+        if self.loss_state_id != calculate_loss_state_id(self):
+            raise ValueError("loss state identity does not match content")
+        return self
+
+
+def calculate_loss_state_id(
+    state: LossStateSnapshot | dict[str, object],
+) -> LossStateId:
+    return LossStateId.parse(sha256_content_id(_content_without_id(state, "loss_state_id")))
+
+
+def create_loss_state(
+    *,
+    eligible_current_equity: Decimal,
+    session_start_equity: Decimal,
+    current_loss: Decimal,
+    loss_breached: bool = False,
+    revision: int = 0,
+) -> LossStateSnapshot:
+    content: dict[str, object] = {
+        "schema_version": "loss-state-v1",
+        "eligible_current_equity": eligible_current_equity,
+        "session_start_equity": session_start_equity,
+        "current_loss": current_loss,
+        "loss_breached": loss_breached,
+        "revision": revision,
+    }
+    return LossStateSnapshot(
+        loss_state_id=calculate_loss_state_id(content),
+        **content,  # type: ignore[arg-type]
+    )
+
+
+class SafetyStateSnapshot(BaseModel):
+    """Canonical safety view composed from explicit loss state, downside, and locks."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    safety_state_id: SafetyStateId
+    schema_version: Literal["safety-state-v1"] = "safety-state-v1"
+    agent_loss_state: LossStateSnapshot
+    parent_loss_state: LossStateSnapshot
+    agent_outstanding_downside: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    parent_outstanding_downside: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    active_locks: tuple[SafetyLock, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_float_values(cls, data: object) -> object:
+        if isinstance(data, dict) and any(
+            isinstance(data.get(field), float)
+            for field in ("agent_outstanding_downside", "parent_outstanding_downside")
+        ):
+            raise ValueError("safety-state financial values must not use float")
+        return data
+
+    @model_validator(mode="after")
+    def validate_state(self) -> Self:
         ordered = tuple(sorted(self.active_locks, key=lambda item: str(item.lock_id)))
         if ordered != self.active_locks or len(set(self.active_locks)) != len(self.active_locks):
             raise ValueError("active locks must be unique and canonical")
+        if self.agent_outstanding_downside > self.parent_outstanding_downside:
+            raise ValueError("agent downside cannot exceed parent downside")
+        if self.safety_state_id != calculate_safety_state_id(self):
+            raise ValueError("safety state identity does not match content")
         return self
+
+
+def calculate_safety_state_id(
+    state: SafetyStateSnapshot | dict[str, object],
+) -> SafetyStateId:
+    return SafetyStateId.parse(sha256_content_id(_content_without_id(state, "safety_state_id")))
+
+
+def create_safety_state(
+    *,
+    agent_loss_state: LossStateSnapshot,
+    parent_loss_state: LossStateSnapshot,
+    agent_outstanding_downside: Decimal = Decimal(0),
+    parent_outstanding_downside: Decimal = Decimal(0),
+    active_locks: tuple[SafetyLock, ...] = (),
+) -> SafetyStateSnapshot:
+    content: dict[str, object] = {
+        "schema_version": "safety-state-v1",
+        "agent_loss_state": agent_loss_state,
+        "parent_loss_state": parent_loss_state,
+        "agent_outstanding_downside": agent_outstanding_downside,
+        "parent_outstanding_downside": parent_outstanding_downside,
+        "active_locks": active_locks,
+    }
+    return SafetyStateSnapshot(
+        safety_state_id=calculate_safety_state_id(content),
+        **content,  # type: ignore[arg-type]
+    )
 
 
 class RiskEvaluationState(BaseModel):
@@ -345,7 +452,7 @@ class RiskEvaluationState(BaseModel):
 
     parent: ParentCapitalSnapshot
     allocation: AllocationSnapshot
-    safety: SafetyStateSnapshot = SafetyStateSnapshot()
+    safety: SafetyStateSnapshot
 
     @model_validator(mode="after")
     def validate_ownership(self) -> Self:
@@ -354,6 +461,15 @@ class RiskEvaluationState(BaseModel):
         for lock in self.safety.active_locks:
             if lock.account_id != self.parent.account_id:
                 raise ValueError("safety lock belongs to a different parent account")
+            if lock.scope is SafetyLockScope.ALLOCATION and (
+                lock.allocation_id != self.allocation.allocation_id
+            ):
+                raise ValueError("allocation safety lock is not applicable")
+            if lock.scope is SafetyLockScope.AGENT and (
+                lock.allocation_id != self.allocation.allocation_id
+                or lock.agent_id != self.allocation.agent_id
+            ):
+                raise ValueError("agent safety lock is not applicable")
         return self
 
 
@@ -361,7 +477,7 @@ class SizingDecision(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     sizing_decision_id: SizingDecisionId
-    schema_version: Literal["sizing-decision-v1"] = "sizing-decision-v1"
+    schema_version: Literal["sizing-decision-v2"] = "sizing-decision-v2"
     proposal_id: TradeProposalId
     risk_configuration_id: RiskConfigurationId
     account_id: AccountId
@@ -372,7 +488,9 @@ class SizingDecision(BaseModel):
     entry_price: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     stop_price: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     unit_risk: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+    round_trip_cost_return: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
     unit_modeled_loss: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+    cash_per_unit: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     allowed_risk_amount: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     modeled_risk_amount: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     reservation_amount: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
@@ -389,7 +507,9 @@ class SizingDecision(BaseModel):
                 "entry_price",
                 "stop_price",
                 "unit_risk",
+                "round_trip_cost_return",
                 "unit_modeled_loss",
+                "cash_per_unit",
                 "allowed_risk_amount",
                 "modeled_risk_amount",
                 "reservation_amount",
@@ -400,14 +520,27 @@ class SizingDecision(BaseModel):
 
     @model_validator(mode="after")
     def validate_sizing(self) -> Self:
-        if self.quantity % self.quantity_increment != 0:
-            raise ValueError("quantity must align to quantity increment")
-        if self.stop_price >= self.entry_price:
-            raise ValueError("long stop must remain below entry")
-        if self.unit_risk != self.entry_price - self.stop_price:
-            raise ValueError("unit risk must equal entry minus stop")
-        if self.modeled_risk_amount > self.allowed_risk_amount:
-            raise ValueError("modeled risk exceeds allowed risk")
+        with localcontext(_DECIMAL_CONTEXT):
+            if self.quantity % self.quantity_increment != 0:
+                raise ValueError("quantity must align to quantity increment")
+            if self.stop_price >= self.entry_price:
+                raise ValueError("long stop must remain below entry")
+            if self.unit_risk != self.entry_price - self.stop_price:
+                raise ValueError("unit risk must equal entry minus stop")
+            if self.unit_modeled_loss != (
+                self.unit_risk + self.entry_price * self.round_trip_cost_return
+            ):
+                raise ValueError("unit modeled loss is arithmetically inconsistent")
+            if self.cash_per_unit != (
+                self.entry_price * (Decimal(1) + self.round_trip_cost_return)
+            ):
+                raise ValueError("cash per unit is arithmetically inconsistent")
+            if self.modeled_risk_amount != self.quantity * self.unit_modeled_loss:
+                raise ValueError("modeled risk amount is arithmetically inconsistent")
+            if self.reservation_amount != self.quantity * self.cash_per_unit:
+                raise ValueError("reservation amount is arithmetically inconsistent")
+            if self.modeled_risk_amount > self.allowed_risk_amount:
+                raise ValueError("modeled risk exceeds allowed risk")
         if self.sizing_decision_id != calculate_sizing_decision_id(self):
             raise ValueError("sizing decision identity does not match content")
         return self
@@ -465,13 +598,34 @@ class RiskEvaluatedLimits(BaseModel):
     parent_committed_and_reserved: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
     allocation_committed_and_reserved: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
     active_reservation_count: Annotated[int, Field(ge=0)]
+    agent_eligible_current_equity: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    parent_eligible_current_equity: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    agent_daily_loss_ceiling: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    parent_daily_loss_ceiling: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    agent_current_loss: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    parent_current_loss: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    agent_outstanding_downside: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    parent_outstanding_downside: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    agent_remaining_loss_headroom: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+    parent_remaining_loss_headroom: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_float_values(cls, data: object) -> object:
+        if isinstance(data, dict) and any(
+            isinstance(data.get(field), float)
+            for field in cls.model_fields
+            if field not in {"parent_revision", "allocation_revision", "active_reservation_count"}
+        ):
+            raise ValueError("evaluated financial limits must not use float")
+        return data
 
 
 class RiskDecision(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     risk_decision_id: RiskDecisionId
-    schema_version: Literal["risk-decision-v1"] = "risk-decision-v1"
+    schema_version: Literal["risk-decision-v2"] = "risk-decision-v2"
     status: RiskDecisionStatus
     reason_codes: tuple[RiskRejectionCode, ...]
     proposal_id: TradeProposalId
@@ -481,6 +635,7 @@ class RiskDecision(BaseModel):
     risk_configuration_id: RiskConfigurationId
     evaluated_at: datetime
     evaluated_limits: RiskEvaluatedLimits
+    evaluated_safety_state: SafetyStateSnapshot
     sizing_decision: SizingDecision | None = None
 
     @field_validator("evaluated_at")
@@ -506,6 +661,39 @@ class RiskDecision(BaseModel):
             or self.sizing_decision.risk_configuration_id != self.risk_configuration_id
         ):
             raise ValueError("sizing decision attribution differs from risk decision")
+        limits = self.evaluated_limits
+        safety = self.evaluated_safety_state
+        if (
+            limits.agent_eligible_current_equity != safety.agent_loss_state.eligible_current_equity
+            or limits.parent_eligible_current_equity
+            != safety.parent_loss_state.eligible_current_equity
+            or limits.agent_current_loss != safety.agent_loss_state.current_loss
+            or limits.parent_current_loss != safety.parent_loss_state.current_loss
+            or limits.agent_outstanding_downside != safety.agent_outstanding_downside
+            or limits.parent_outstanding_downside != safety.parent_outstanding_downside
+        ):
+            raise ValueError("evaluated limits do not match bound safety state")
+        with localcontext(_DECIMAL_CONTEXT):
+            if limits.agent_remaining_loss_headroom != max(
+                Decimal(0),
+                limits.agent_daily_loss_ceiling
+                - limits.agent_current_loss
+                - limits.agent_outstanding_downside,
+            ) or limits.parent_remaining_loss_headroom != max(
+                Decimal(0),
+                limits.parent_daily_loss_ceiling
+                - limits.parent_current_loss
+                - limits.parent_outstanding_downside,
+            ):
+                raise ValueError("remaining loss headroom is arithmetically inconsistent")
+        if self.sizing_decision is not None and (
+            self.sizing_decision.allowed_risk_amount
+            > min(
+                limits.agent_remaining_loss_headroom,
+                limits.parent_remaining_loss_headroom,
+            )
+        ):
+            raise ValueError("sizing exceeds bound remaining loss headroom")
         if self.risk_decision_id != calculate_risk_decision_id(self):
             raise ValueError("risk decision identity does not match content")
         return self
@@ -573,7 +761,7 @@ class CapitalReservation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     reservation_id: ReservationId
-    schema_version: Literal["capital-reservation-v1"] = "capital-reservation-v1"
+    schema_version: Literal["capital-reservation-v2"] = "capital-reservation-v2"
     proposal_id: TradeProposalId
     risk_decision_id: RiskDecisionId
     sizing_decision_id: SizingDecisionId
@@ -583,6 +771,7 @@ class CapitalReservation(BaseModel):
     agent_id: AgentId
     instrument_id: InstrumentId
     reserved_amount: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+    reserved_downside: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     approved_quantity: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
     authority_context: ExecutionDimensions
@@ -592,7 +781,7 @@ class CapitalReservation(BaseModel):
     state: ReservationState = ReservationState.ACTIVE
     transitioned_at: datetime
 
-    @field_validator("reserved_amount", "approved_quantity", mode="before")
+    @field_validator("reserved_amount", "reserved_downside", "approved_quantity", mode="before")
     @classmethod
     def reject_float_values(cls, value: object) -> object:
         if isinstance(value, float):

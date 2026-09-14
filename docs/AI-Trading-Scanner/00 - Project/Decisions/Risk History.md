@@ -25,5 +25,15 @@ Previous contract used a single-account scope. New contract scopes E/cash/limits
 - Arithmetic: long unit risk is entry minus stop plus the supplied Phase 4 round-trip cost return; policy/cash/position/agent/parent/instrument limits bound quantity; `FUTURE_RISK_ENGINE` floors to generic increment and `FINAL_QUANTITY` either fits exactly or rejects.
 - Atomicity/lifecycle: parent then allocation lock order; complete replacement snapshots publish together; active duplicate is idempotent; RELEASED/CONSUMED/EXPIRED terminal transitions conserve capital; no unlock API.
 - Classification: risk-critical implementation candidate, research-only and unvalidated. No threshold is claimed optimal; no strategy result, order, fill, broker, P&L engine or live authority exists.
-- Evidence: 68 focused Phase 5 cases and 371 total local tests passed before review handoff; independent competent review is still required. Commit/PR not yet recorded.
+- Evidence: 68 focused Phase 5 cases and 371 total local tests passed before review handoff. Original candidate `0c36a5de657e749daa0ef987c47c44d299dd67b7` was reviewed in PR #4 and received CHANGES REQUIRED; it was not approved or merged.
 - See [[06 - Testing/Phase 5 Completion Criteria]] and [[06 - Testing/Phase 5 Independent Review]].
+
+## 2026-09-14 — Phase 5 review remediation
+
+- Review evidence: PR #4 reviewed original candidate `0c36a5de657e749daa0ef987c47c44d299dd67b7`; result **CHANGES REQUIRED**. No approval or merge is recorded.
+- Corrected risk basis: sizing now uses explicit eligible current equity and remaining agent/parent daily-loss headroom. Content-identified loss observations retain session-start equity, current equity, current loss, latch state and revision. The risk decision binds the composed safety identity and monetary ceiling/loss/outstanding/headroom evidence.
+- Corrected reservation behavior: ACTIVE and conservatively CONSUMED reservations contribute modeled downside; final reserve recomposes this state under the parent/allocation transaction boundary. A proposal-specific guard enforces one economic reservation across allocations/accounts within one coordinator.
+- Corrected lifecycle: active replay revalidates time, locks, loss state and authority without double-counting itself; equality at expiry fails closed and post-expiry consume atomically expires before rejecting.
+- Corrected integrity/concurrency: sizing artifacts validate their own normalized cost, per-unit loss/cash and aggregate arithmetic; binary floats are rejected in evaluated limits; safety-lock and reservation iteration is partitioned by parent.
+- Classification: risk-critical corrective candidate. No risk threshold changed, no strategy result was produced and no execution authority was added. Independent competent re-review of the exact replacement commit remains mandatory.
+- Evidence: 27 new adversarial cases cover the reported findings; final candidate verification is recorded in [[06 - Testing/Phase 5 Completion Criteria]].

@@ -115,5 +115,13 @@ class SafetyLockId(Identifier):
     """Content-derived identity of an active safety lock."""
 
 
+class LossStateId(Identifier):
+    """Content-derived identity of an immutable loss-capacity observation."""
+
+
+class SafetyStateId(Identifier):
+    """Content-derived identity of one evaluated safety-state view."""
+
+
 class ApprovalBindingId(Identifier):
     """Content-derived identity of immutable future approval evidence."""

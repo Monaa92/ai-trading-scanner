@@ -2,7 +2,14 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-from risk_helpers import allocation_snapshot, parent_snapshot, risk_policy, state, trade_proposal
+from risk_helpers import (
+    allocation_snapshot,
+    parent_snapshot,
+    risk_policy,
+    safety_state,
+    state,
+    trade_proposal,
+)
 
 from ai_trading_scanner.domain.execution import (
     ApprovalPolicy,
@@ -13,7 +20,6 @@ from ai_trading_scanner.risk import (
     RiskDecisionStatus,
     RiskEngine,
     RiskRejectionCode,
-    SafetyStateSnapshot,
 )
 from ai_trading_scanner.strategies import TradeProposal, calculate_trade_proposal_id
 
@@ -160,7 +166,7 @@ def test_expired_stale_and_future_proposals_fail_with_distinct_codes() -> None:
 
 def test_drawdown_snapshot_blocks_without_fabricating_pnl() -> None:
     proposal = trade_proposal()
-    safety = SafetyStateSnapshot(agent_loss_breached=True)
+    safety = safety_state(agent_loss_breached=True)
     decision = RiskEngine().evaluate(
         proposal,
         risk_policy(),

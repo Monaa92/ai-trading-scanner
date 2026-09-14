@@ -1,6 +1,6 @@
 # Gated roadmap
 
-Phases 1–4 are complete on `main`. The Phase 5 risk/allocation/safety candidate is implemented and locally verified; independent competent human review remains required before merge. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
+Phases 1–4 are complete on `main`. PR #4's original Phase 5 candidate received CHANGES REQUIRED; the remediation candidate requires independent competent re-review before merge. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
 
 | Phase | Deliverable | Exit criterion |
 | --- | --- | --- |
@@ -9,7 +9,7 @@ Phases 1–4 are complete on `main`. The Phase 5 risk/allocation/safety candidat
 | 2 | Historical data/calendar/quality — IMPLEMENTED | Immutable canonical records, provenance, available-at semantics, XNYS sessions, quality findings, deterministic dataset identity and audited synthetic fixtures. Provider ingestion, persisted revisions and real datasets remain later work. |
 | 3 | Deterministic indicators — COMPLETE | Exact formulas, seeds/session/gaps, warning lineage, prefix invariance and batch/incremental fixtures pass; independently reviewed, approved and merged in PR #2 (`0cf0497`) |
 | 4 | Strategy and proposal contracts — COMPLETE | Registered unoptimized `BASELINE_RESEARCH_V1` parameters, four independent profiles, first-class NO_TRADE, model/profile independence, agent-scoped pure evaluations and deterministic proposal/management identities; no order submission. Independently reviewed and merged through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`). |
-| 5 | Risk/allocation/safety — REVIEW CANDIDATE | Decimal sizing, parent+agent atomic in-memory reservations, scoped locks, conservation, ownership and approval-binding behavior implemented; independent review remains required |
+| 5 | Risk/allocation/safety — REMEDIATION CANDIDATE | Decimal sizing against explicit current loss/headroom, parent+agent atomic in-memory reservations, proposal-wide uniqueness, expiry-safe replay/lifecycle, partitioned scoped locks, conservation, ownership and approval-binding behavior implemented; independent re-review remains required |
 | 6 | Backtesting/simulation | Causal SimulationBroker lifecycle, isolated participants, versioned round-trip costs, fixed management, decision/approval replay where valid, audit and core metrics pass |
 | 7 | Historical validation | Registered comparable evidence, rejection/counterfactual separation and failed experiments retained |
 | 7a | Optional management hypotheses | Separately specified/versioned dynamic policy and fixed-baseline comparison before any use |

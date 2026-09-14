@@ -20,6 +20,7 @@ from ai_trading_scanner.risk import (
     AllocationSnapshot,
     ApprovalBinding,
     InMemoryCapitalCoordinator,
+    LossStateSnapshot,
     ParentCapitalSnapshot,
     RiskConfiguration,
     RiskEngine,
@@ -28,6 +29,8 @@ from ai_trading_scanner.risk import (
     baseline_risk_configuration,
     calculate_approval_binding_id,
     calculate_risk_configuration_id,
+    create_loss_state,
+    create_safety_state,
 )
 from ai_trading_scanner.strategies import (
     MomentumConfiguration,
@@ -53,6 +56,8 @@ def risk_policy(**overrides: object) -> RiskConfiguration:
             "max_agent_exposure_fraction": Decimal("1"),
             "max_parent_exposure_fraction": Decimal("1"),
             "max_instrument_exposure_fraction": Decimal("1"),
+            "max_agent_drawdown_fraction": Decimal("1"),
+            "max_parent_drawdown_fraction": Decimal("1"),
             "max_concurrent_reservations": 2,
             "quantity_increment": Decimal("0.1"),
         }
@@ -156,10 +161,57 @@ def state(
     allocation: AllocationSnapshot | None = None,
     safety: SafetyStateSnapshot | None = None,
 ) -> RiskEvaluationState:
+    parent_value = parent or parent_snapshot()
+    allocation_value = allocation or allocation_snapshot()
     return RiskEvaluationState(
-        parent=parent or parent_snapshot(),
-        allocation=allocation or allocation_snapshot(),
-        safety=safety or SafetyStateSnapshot(),
+        parent=parent_value,
+        allocation=allocation_value,
+        safety=safety
+        or safety_state(
+            agent_capital=str(allocation_value.allocated_capital),
+            parent_capital=str(parent_value.total_capital),
+        ),
+    )
+
+
+def loss_state(
+    capital: str = "100",
+    *,
+    current_loss: str = "0",
+    loss_breached: bool = False,
+    revision: int = 0,
+) -> LossStateSnapshot:
+    session_start = Decimal(capital)
+    loss = Decimal(current_loss)
+    return create_loss_state(
+        eligible_current_equity=session_start - loss,
+        session_start_equity=session_start,
+        current_loss=loss,
+        loss_breached=loss_breached,
+        revision=revision,
+    )
+
+
+def safety_state(
+    *,
+    agent_capital: str = "100",
+    parent_capital: str = "100",
+    agent_current_loss: str = "0",
+    parent_current_loss: str = "0",
+    agent_loss_breached: bool = False,
+    parent_loss_breached: bool = False,
+) -> SafetyStateSnapshot:
+    return create_safety_state(
+        agent_loss_state=loss_state(
+            agent_capital,
+            current_loss=agent_current_loss,
+            loss_breached=agent_loss_breached,
+        ),
+        parent_loss_state=loss_state(
+            parent_capital,
+            current_loss=parent_current_loss,
+            loss_breached=parent_loss_breached,
+        ),
     )
 
 
@@ -169,9 +221,10 @@ def coordinator(
     allocations: tuple[AllocationSnapshot, ...] | None = None,
 ) -> InMemoryCapitalCoordinator:
     result = InMemoryCapitalCoordinator()
-    result.register_parent(parent or parent_snapshot())
+    parent_value = parent or parent_snapshot()
+    result.register_parent(parent_value, loss_state(str(parent_value.total_capital)))
     for allocation in allocations or (allocation_snapshot(),):
-        result.register_allocation(allocation)
+        result.register_allocation(allocation, loss_state(str(allocation.allocated_capital)))
     return result
 
 
