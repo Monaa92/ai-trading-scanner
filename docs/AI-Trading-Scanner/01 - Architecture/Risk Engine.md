@@ -1,6 +1,6 @@
 # Risk management
 
-Canonical risk specification, EUR50 baseline `risk-v0.1.0` with allocation-scope extension `risk-contract-v0.2.0`, 2026-09-13. Phase 5 implements a remediation-candidate subset in `ai_trading_scanner.risk`; it is not yet accepted or execution-capable. Values are RISK CONSTRAINTS, not empirically optimal parameters. [[01 - Architecture/Portfolio Accounting/Position Sizing]] owns monetary formulas; [[00 - Project/Decisions/Risk History]] records changes.
+Canonical risk specification, EUR50 baseline `risk-v0.1.0` with allocation-scope extension `risk-contract-v0.2.0`, 2026-09-13. Phase 5 implements the accepted deterministic risk/allocation subset in `ai_trading_scanner.risk`; it is not execution-capable. Values are RISK CONSTRAINTS, not empirically optimal parameters. [[01 - Architecture/Portfolio Accounting/Position Sizing]] owns monetary formulas; [[00 - Project/Decisions/Risk History]] records changes.
 
 ## Phase 5 implemented boundary
 

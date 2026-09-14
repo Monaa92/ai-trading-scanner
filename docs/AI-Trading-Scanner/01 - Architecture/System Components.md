@@ -1,6 +1,6 @@
 # Backend architecture
 
-Status: mostly design specification. Phases 1–4 implement the offline data/indicator/strategy foundations. The Phase 5 candidate implements pure risk sizing and a concurrency-safe in-memory parent/allocation reservation boundary in `risk`; full portfolio accounting, durable persistence, execution and broker boundaries remain specifications. Parent: [[01 - Architecture/System Architecture]].
+Status: mostly design specification. Phases 1–5 implement the offline data/indicator/strategy/risk foundations. Phase 5 implements pure risk sizing and a concurrency-safe in-memory parent/allocation reservation boundary in `risk`; full portfolio accounting, durable persistence, execution and broker boundaries remain specifications. Parent: [[01 - Architecture/System Architecture]].
 
 ## Ownership and dependency direction
 

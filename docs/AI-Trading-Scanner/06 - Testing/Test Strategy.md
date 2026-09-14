@@ -1,6 +1,6 @@
 # Testing strategy
 
-Status: Phase 1–4 suites are complete on `main`. The Phase 5 candidate adds focused risk, sizing, allocation, lifecycle, authority and real threaded-concurrency cases and requires independent review. Trading, full replay, portfolio P&L and frontend tests remain future work. See [PROJECT_RULES](../../PROJECT_RULES.md), [[06 - Testing/Phase 4 Independent Review]] and [[06 - Testing/Phase 5 Independent Review]].
+Status: Phase 1–5 suites are complete on `main`. Phase 5 adds focused risk, sizing, allocation, lifecycle, authority and real threaded-concurrency cases; PR #4 was independently reviewed by `Dekkerszz` with PASS and merged as `d08faa7ca3fdd3f35a053838f736d4d709d503d9`. Trading, causal backtesting/simulation, portfolio P&L and frontend tests remain future work. See [PROJECT_RULES](../../PROJECT_RULES.md), [[06 - Testing/Phase 4 Independent Review]] and [[06 - Testing/Phase 5 Independent Review]].
 
 The initial 111 Phase 1 cases remain regression coverage for valid/malformed IDs, exact enum rejection, dimension independence, PAPER + FULL_AUTO representation, safe defaults, forbidden authority fields, disabled capability switches, redacted validation errors, non-fallback LIVE failure, CLI exit behavior and the in-memory FastAPI health route.
 

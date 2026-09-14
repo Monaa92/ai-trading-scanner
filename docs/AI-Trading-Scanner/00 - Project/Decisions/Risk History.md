@@ -74,3 +74,11 @@ Previous contract used a single-account scope. New contract scopes E/cash/limits
 - Lock order: unchanged at proposal → registry-only scope resolution → parent → allocation → registry. Registration guarantees from the fourth remediation remain unchanged.
 - Classification: risk-critical corrective candidate. Risk thresholds, strategy behavior and execution authority are unchanged. Independent competent re-review of the exact fifth-remediation branch head remains mandatory.
 - Evidence: 38 additional deterministic cases include 12 reserve publication failures, 24 lifecycle publication failures and two blocked reader/competitor probes. Phase 5 has 177 focused tests and the repository has 480 tests. See [[06 - Testing/Phase 5 Completion Criteria]] and [[06 - Testing/Phase 5 Independent Review]].
+
+## 2026-09-14 — Phase 5 approval and merge
+
+- Review evidence: `Dekkerszz` independently reviewed `90764dc7d6cca035da9fbe28cd4989f23399ea6e` in PR #4 and returned **PASS**.
+- Merge: PR #4 was merged and closed as `d08faa7ca3fdd3f35a053838f736d4d709d503d9`.
+- Completion: all previously identified Phase 5 findings are resolved. The reviewed candidate passed 480 tests, including 303 Phase 1–4 regressions and 177 focused Phase 5 cases.
+- Boundary unchanged: Phase 5 adds no broker/provider/network/AI/order/PAPER/LIVE execution authority. It remains single-process and in-memory, with no crash recovery, multi-process coordination, complete portfolio/P&L lifecycle or allocation-retirement operation.
+- Next milestone: Phase 6 — causal backtesting and simulation — is next and has not started.

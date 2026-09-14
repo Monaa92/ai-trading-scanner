@@ -1,6 +1,6 @@
 # AI Trading Scanner
 
-Architecture baseline: 2026-09-14. Phases 1–4 provide the merged offline data/indicator/strategy foundations. The Phase 5 review candidate adds deterministic risk sizing and local atomic capital reservations without orders or brokers. Purpose: test whether strategies work, not prove that they work. No accepted strategy or performance evidence exists yet.
+Architecture baseline: 2026-09-14. Phases 1–5 provide the merged offline data/indicator/strategy/risk foundations. Phase 5 adds deterministic risk sizing and local atomic capital reservations without orders or brokers. Phase 6 — causal backtesting and simulation — is next and has not started. Purpose: test whether strategies work, not prove that they work. No accepted strategy or performance evidence exists yet.
 
 Read [PROJECT_RULES](../../PROJECT_RULES.md) first. This folder is the Obsidian vault. Notes use the numbered project hierarchy; valid local Obsidian settings are preserved.
 

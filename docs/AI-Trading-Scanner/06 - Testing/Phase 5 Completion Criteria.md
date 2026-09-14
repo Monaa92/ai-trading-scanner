@@ -1,10 +1,10 @@
 # Phase 5 completion criteria
 
-Status: **FIVE CANDIDATES RECEIVED CHANGES REQUIRED; FIFTH REMEDIATION RE-REVIEW REQUIRED.**
+Status: **COMPLETE.** PR #4 independently reviewed candidate `90764dc7d6cca035da9fbe28cd4989f23399ea6e`; `Dekkerszz` returned PASS, and GitHub merged and closed it as `d08faa7ca3fdd3f35a053838f736d4d709d503d9`.
 
 Phase 5 is complete only when the exact candidate satisfies this invariant: given an immutable trade proposal, authoritative parent/allocation state, deterministic risk configuration and explicit time, it can deterministically reject or size the proposal, atomically reserve both ownership scopes, and fail closed without I/O or order submission.
 
-| Criterion | Candidate evidence |
+| Criterion | Implemented evidence |
 | --- | --- |
 | Typed ownership | Stable account, agent, allocation, risk, sizing, reservation, lock and approval-binding identities |
 | Exact arithmetic and provenance | Decimal-only capital/risk/quantity/equity/loss/headroom values; float/non-finite/negative rejection; sizing embeds proposal, risk configuration and evaluated state and deterministically re-derives quantity and every financial field; downward generic-increment sizing |
@@ -30,6 +30,8 @@ Final re-review of candidate `d1da3a07db417071697730b4acabe220755f22bc` returned
 Final independent re-review of candidate `73a12676224d0fab901af69c8dc43fa65e63f707` returned **CHANGES REQUIRED**. Aggregate parent ownership, sizing provenance and relational risk evidence were resolved, but parent/allocation snapshots could become visible before their required locks and related scope state. The fourth remediation makes registry release the public registration commit boundary, publishes each primary snapshot last, rolls back all related entries after an injected publication failure, and adds eight forced-interleaving/cleanup/immediate-reservation cases. The complete workspace passes 442 tests: 303 Phase 1–4 regressions and 139 focused Phase 5 cases. Phase 5 remains incomplete until the exact replacement candidate receives independent competent human approval.
 
 Independent re-review of fourth-remediation candidate `8023bd8a59951b0bde1a207c73f398e94e921ae7` returned **CHANGES REQUIRED**. Registration publication was resolved, but an injected later write failure could leave reservation creation or a RELEASED/EXPIRED/CONSUMED transition with divergent parent, allocation and reservation/index state. The fifth remediation records every dictionary mutation before applying it and, under the existing proposal/scope/registry locks, rolls all applied mutations back in reverse order through base dictionary operations if any publication stage raises. Thirty-six before/after-stage failure cases plus deterministic reader and competing-reservation barriers bring the suite to 480 tests: 303 Phase 1–4 regressions and 177 focused Phase 5 cases. Phase 5 remains incomplete until independent competent review approves the exact fifth-remediation candidate.
+
+Final independent review of `90764dc7d6cca035da9fbe28cd4989f23399ea6e` returned **PASS** from `Dekkerszz`. PR #4 merged and closed as `d08faa7ca3fdd3f35a053838f736d4d709d503d9`; all prior findings are resolved. The reviewed candidate passed 480 tests, including 303 Phase 1–4 regressions and 177 focused Phase 5 cases. No broker/provider/network/AI/order/PAPER/LIVE execution authority was added.
 
 Known limitation: `InMemoryCapitalCoordinator` is correct only within one process and coordinator instance. It is not crash-durable, does not coordinate multiple workers, and does not replace the future transactional ledger/outbox. `committed_capital` is a reservation lifecycle state, not evidence of an order, fill or position; its modeled downside remains conservatively unavailable until a future position lifecycle can close/reconcile it.
 
