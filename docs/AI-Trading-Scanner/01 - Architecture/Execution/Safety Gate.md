@@ -2,6 +2,8 @@
 
 Required on every executable entry and management command, independent of approval policy and AI. Pipeline: available market data → deterministic strategy → optional AI → risk → safety preflight → approval policy → fresh risk/safety revalidation → atomic intent/reservation/audit → dispatch revalidation → adapter. See [[01 - Architecture/Execution/Approval Workflow]]. Safety is an explicit domain/application policy boundary, not a second independent sizing formula.
 
+Phase 5 implements only the risk/allocation subset: typed parent/allocation/agent ownership, external drawdown flags, active lock projection, proposal/configuration/authority checks and atomic reservation. Parent locks propagate; agent/allocation locks remain local. Lock activation races through the same parent→allocation order as reservation, so either the lock blocks a new reservation or an already completed reservation remains visible. No unlock operation is exposed, and no existing reservation is silently destroyed. Broker health, durable permission epochs, outbox and dispatch checks remain specifications.
+
 | Check | Authoritative owner | Safety-gate responsibility |
 | --- | --- | --- |
 | Equity, cash/FX, quantity, monetary/percentage risk, stop/target geometry, net RR | Risk engine under versioned agent and account profiles | Require fresh PASS bound to identical proposed terms and input/config revisions; never recompute differently |

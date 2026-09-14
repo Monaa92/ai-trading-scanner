@@ -93,3 +93,27 @@ class TradeProposalId(Identifier):
 
 class ManagementMandateId(Identifier):
     """Content-derived identity of an immutable management mandate."""
+
+
+class RiskConfigurationId(Identifier):
+    """Content-derived identity of an immutable risk configuration."""
+
+
+class RiskDecisionId(Identifier):
+    """Content-derived identity of one deterministic risk evaluation."""
+
+
+class SizingDecisionId(Identifier):
+    """Content-derived identity of one deterministic sizing result."""
+
+
+class ReservationId(Identifier):
+    """Identity of one proposal-bound capital reservation contract."""
+
+
+class SafetyLockId(Identifier):
+    """Content-derived identity of an active safety lock."""
+
+
+class ApprovalBindingId(Identifier):
+    """Content-derived identity of immutable future approval evidence."""

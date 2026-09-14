@@ -1,6 +1,6 @@
 # Execution dimensions and privilege boundaries
 
-Status: Phase 1 domain/configuration model IMPLEMENTED; execution, broker connections and operational PAPER/LIVE remain unimplemented.
+Status: Phase 1 domain/configuration model IMPLEMENTED. The Phase 5 candidate consumes these dimensions for risk/reservation restrictions without changing them; execution, broker connections and operational PAPER/LIVE remain unimplemented.
 
 Five fields remain distinct in every immutable agent configuration and run manifest:
 
@@ -40,4 +40,4 @@ MANUAL_APPROVAL consents only to the exact initial order and displayed fixed pro
 
 ## Phase 1 executable boundary
 
-`ExecutionDimensions` represents every documented value without coupling the fields. `FoundationConfig` is deliberately narrower: it rejects LIVE, ORDER_ENABLED and experiment execution before startup. PAPER + FULL_AUTO remains structurally valid when SIGNAL_ONLY, and PAPER + ORDER_ENABLED + FULL_AUTO remains valid in the domain model for future gated implementation. No current object grants submission, credential, allocation, risk or lock authority.
+`ExecutionDimensions` represents every documented value without coupling the fields. `FoundationConfig` is deliberately narrower: it rejects LIVE, ORDER_ENABLED and experiment execution before startup. PAPER + FULL_AUTO remains structurally valid when SIGNAL_ONLY, and PAPER + ORDER_ENABLED + FULL_AUTO remains valid in the domain model for future gated implementation. Phase 5 risk policies may allow SIMULATION/PAPER combinations but prohibit LIVE; the in-memory coordinator can reserve only under `ORDER_ENABLED` and has no submission, credential, broker or unlock authority.

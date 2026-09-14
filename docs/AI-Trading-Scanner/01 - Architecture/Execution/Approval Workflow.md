@@ -2,6 +2,8 @@
 
 Proposal, human approval and executable order intent are distinct records. Strategy/risk validity is not human consent. Existing signals link to ProposalVersion; [[02 - Agents & Strategies/Shared Agent Rules/Signal Lifecycle]] no longer uses APPROVED to ambiguously mean both risk and user approval.
 
+Phase 5 implements validation of an optional immutable `ApprovalBinding` only. The binding contains the exact proposal, sizing decision, quantity, management mandate, configuration, execution dimensions and validity window. Manual reservation requires the immutable proposal itself to carry `FINAL_QUANTITY`; a future-sized proposal must first become a new proposal version before consent. The binding is supplied externally; risk and allocation never generate or infer human consent. No ApprovalService, authenticated user workflow or order intent exists yet.
+
 ## Proposal contents
 
 Persist proposal_id/version/content hash, agent/account/allocation, run/participant, data/run mode, execution environment, submission mode, approval policy, context, source candidate/features/as_of, strategy/config versions, symbol/instrument/direction, order type/TIF, intended entry and permitted entry-price bound, stop, target, exact quantity, estimated notional/currency/fees/FX, modeled monetary and percentage risk (with equity denominator), intended net RR, trade-management version/mandate, AI result/version where applicable, all strategy/risk/safety results and reasons, creation/expiry times, account/allocation revisions and display schema. Numeric unknowns remain explicitly unavailable; a blocked proposal is not presented as approvable.

@@ -1,6 +1,6 @@
 # Gated roadmap
 
-Phases 1, 2, 3 and 4 are complete on `main`. Phase 4 was independently reviewed by `Dekkerszz`, approved with review status PASS, and merged through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`). A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
+Phases 1–4 are complete on `main`. The Phase 5 risk/allocation/safety candidate is implemented and locally verified; independent competent human review remains required before merge. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
 
 | Phase | Deliverable | Exit criterion |
 | --- | --- | --- |
@@ -9,7 +9,7 @@ Phases 1, 2, 3 and 4 are complete on `main`. Phase 4 was independently reviewed 
 | 2 | Historical data/calendar/quality — IMPLEMENTED | Immutable canonical records, provenance, available-at semantics, XNYS sessions, quality findings, deterministic dataset identity and audited synthetic fixtures. Provider ingestion, persisted revisions and real datasets remain later work. |
 | 3 | Deterministic indicators — COMPLETE | Exact formulas, seeds/session/gaps, warning lineage, prefix invariance and batch/incremental fixtures pass; independently reviewed, approved and merged in PR #2 (`0cf0497`) |
 | 4 | Strategy and proposal contracts — COMPLETE | Registered unoptimized `BASELINE_RESEARCH_V1` parameters, four independent profiles, first-class NO_TRADE, model/profile independence, agent-scoped pure evaluations and deterministic proposal/management identities; no order submission. Independently reviewed and merged through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`). |
-| 5 | Risk/allocation/safety | Decimal sizing, parent+agent atomic reservations, scoped locks and ownership/approval contract tests independently reviewed |
+| 5 | Risk/allocation/safety — REVIEW CANDIDATE | Decimal sizing, parent+agent atomic in-memory reservations, scoped locks, conservation, ownership and approval-binding behavior implemented; independent review remains required |
 | 6 | Backtesting/simulation | Causal SimulationBroker lifecycle, isolated participants, versioned round-trip costs, fixed management, decision/approval replay where valid, audit and core metrics pass |
 | 7 | Historical validation | Registered comparable evidence, rejection/counterfactual separation and failed experiments retained |
 | 7a | Optional management hypotheses | Separately specified/versioned dynamic policy and fixed-baseline comparison before any use |
@@ -29,4 +29,4 @@ Phases 1, 2, 3 and 4 are complete on `main`. Phase 4 was independently reviewed 
 
 Autonomous paper experiments are controlled research after historical/paper validation. They do not advance operational live autonomy. The four profile names are hypotheses, not permission to invent missing parameters or activate unvalidated management. A deterministic-only program can skip AI phases, documenting that choice, then validate manual operation. Core accounting/audit/statistics begin before research, not postponed to Phase 10.
 
-Exact next action: **Phase 5 risk, allocation and safety contracts**, extending the approved proposal boundary with Decimal sizing, parent-and-agent atomic reservations, scoped locks and ownership/approval contract tests. This does not authorize order submission, broker integration, PAPER or LIVE operation.
+Exact next action: **independent competent human review of the Phase 5 candidate**, focused on sizing, ownership, conservation, atomicity, concurrency, locks, expiry and immutable approval/proposal binding. If approved and merged without material change, Phase 6 is backtesting/simulation. No order submission, broker integration, PAPER or LIVE operation is authorized.

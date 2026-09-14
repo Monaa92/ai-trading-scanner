@@ -1,6 +1,12 @@
 # Position sizing and currencies
 
-Canonical sizing contract. Money/quantity/ticks use decimal arithmetic. Round only at documented instrument/broker boundaries, then recheck every constraint. Inputs must share compatible units and be valid at decision/submission time.
+Canonical sizing contract. Money/quantity/ticks use decimal arithmetic. Round only at documented instrument/broker boundaries, then recheck every constraint. Inputs must share compatible units and be valid at decision/submission time. Phase 5 implements the broker-independent research subset described below; full FX, nonlinear fee and capability sizing remains future work.
+
+## Phase 5 deterministic subset
+
+The Phase 5 engine uses `unit_risk = entry - stop` for the long-only baseline and conservatively adds `entry × supplied round-trip cost return` to modeled unit loss. Its allowed risk is allocation capital times the configured fraction, further bounded by optional monetary risk. Candidate quantity is bounded by parent and allocation available capital, per-position notional, agent/parent aggregate exposure, instrument concentration and an optional exact Phase 4 quantity. Cash reservation uses `quantity × entry × (1 + supplied round-trip cost return)` so the current cost contract is not ignored.
+
+`FUTURE_RISK_ENGINE` quantity floors to the generic configured increment with `ROUND_FLOOR`, followed by exact risk/capacity validation. `FINAL_QUANTITY` is already approval-sensitive content and therefore must fit exactly and align to the increment; Phase 5 rejects rather than resizing it. This generic increment is not a broker capability claim. Currency mismatch fails closed; no implicit FX conversion occurs.
 
 ## Currency model
 

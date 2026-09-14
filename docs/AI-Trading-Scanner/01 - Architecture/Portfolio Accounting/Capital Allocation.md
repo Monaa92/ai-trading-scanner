@@ -2,6 +2,10 @@
 
 EUR50 is the initial experiment configuration, not a branch in trading logic. Normal agents can eventually use EUR50, EUR500, EUR5000 or another approved allocation/currency through the same decimal risk/sizing engine. Changing capital does not validate a strategy or waive live gates.
 
+Phase 5 implements immutable parent/allocation snapshots and a local `InMemoryCapitalCoordinator`. Each scope conserves `total = available + active reserved + committed`. Reservation acquires a parent lock then its allocation lock, revalidates current risk/authority, prepares both replacement snapshots and the immutable reservation, then publishes the complete state while both locks are held. A failure publishes nothing. Per-parent locks allow independent funding accounts to proceed without one global transaction lock.
+
+This is an in-process concurrency contract, not durable accounting. Process loss, multiple workers and database failures are not covered. Before Phase 6 can treat reservations as authoritative across restarts, the same read→validate→reserve parent+agent→persist reservation→commit boundary must use durable transactional storage, optimistic revisions/fencing and recovery evidence.
+
 ## Three different quantities
 
 - **Broker account equity:** all marked assets/cash less liabilities in the funding account, including unallocated assets and other agents. Never supplied as every agent's sizing balance.

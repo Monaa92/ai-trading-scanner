@@ -1,4 +1,4 @@
-"""Provider-independent domain primitives available through Phase 2."""
+"""Provider-independent domain primitives."""
 
 from ai_trading_scanner.domain.execution import (
     ApprovalPolicy,
@@ -13,6 +13,7 @@ from ai_trading_scanner.domain.identities import (
     AccountId,
     AgentId,
     AllocationId,
+    ApprovalBindingId,
     ConfigurationVersionId,
     DatasetId,
     ExperimentId,
@@ -20,6 +21,11 @@ from ai_trading_scanner.domain.identities import (
     InstrumentId,
     ManagementMandateId,
     ModelId,
+    ReservationId,
+    RiskConfigurationId,
+    RiskDecisionId,
+    SafetyLockId,
+    SizingDecisionId,
     StrategyConfigurationId,
     StrategyDecisionId,
     StrategyId,
@@ -30,6 +36,7 @@ __all__ = [
     "AccountId",
     "AgentId",
     "AllocationId",
+    "ApprovalBindingId",
     "ApprovalPolicy",
     "ConfigurationVersionId",
     "DataRunMode",
@@ -43,6 +50,11 @@ __all__ = [
     "ManagementMandateId",
     "ModelId",
     "OperatingContext",
+    "ReservationId",
+    "RiskConfigurationId",
+    "RiskDecisionId",
+    "SafetyLockId",
+    "SizingDecisionId",
     "StrategyConfigurationId",
     "StrategyDecisionId",
     "StrategyId",

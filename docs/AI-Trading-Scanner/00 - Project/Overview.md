@@ -1,6 +1,6 @@
 # AI Trading Scanner
 
-Architecture baseline: 2026-09-14. Phases 1–4 provide the merged executable offline configuration, historical-data, deterministic-indicator and strategy/proposal foundations. Phase 4 was independently reviewed and merged without order or account authority. Purpose: test whether strategies work, not prove that they work. No accepted strategy or performance evidence exists yet.
+Architecture baseline: 2026-09-14. Phases 1–4 provide the merged offline data/indicator/strategy foundations. The Phase 5 review candidate adds deterministic risk sizing and local atomic capital reservations without orders or brokers. Purpose: test whether strategies work, not prove that they work. No accepted strategy or performance evidence exists yet.
 
 Read [PROJECT_RULES](../../PROJECT_RULES.md) first. This folder is the Obsidian vault. Notes use the numbered project hierarchy; valid local Obsidian settings are preserved.
 
@@ -13,7 +13,7 @@ Read [PROJECT_RULES](../../PROJECT_RULES.md) first. This folder is the Obsidian 
 - Technical: [[01 - Architecture/System Components]], [[01 - Architecture/Market Data]], [[01 - Architecture/Data Model]], [[01 - Architecture/Broker Architecture]], [[01 - Architecture/AI Architecture]], [[07 - Operations/Configuration]], [[07 - Operations/Logging & Observability]], [[06 - Testing/Test Strategy]], [[07 - Operations/Security & Secrets]], [[08 - Research/External References]].
 - Operations: [[07 - Operations/Setup]], [[07 - Operations/Development Workflow]], [[07 - Operations/Runbooks/Incident and Failure Procedures]].
 - Current extensions: [[01 - Architecture/Broker Architecture]], [[02 - Agents & Strategies/Experiment 1 Strategy Profiles]], [[03 - Experiments/Experiment 1]], [[03 - Experiments/Capital Sweep]], [[03 - Experiments/Minimum Viable Capital]], [[03 - Experiments/Decision Replay]], [[04 - Costs & Economics/Transaction Costs]], [[04 - Costs & Economics/AI Inference Costs]], [[04 - Costs & Economics/API Budget Controls]].
-- Readiness/reporting/recovery: [[06 - Testing/Phase 3 Independent Review]], [[06 - Testing/Phase 4 Completion Criteria]], [[06 - Testing/Phase 4 Independent Review]], [[09 - Performance/Dashboard]], [[07 - Operations/Disaster Recovery]].
+- Readiness/reporting/recovery: [[06 - Testing/Phase 4 Independent Review]], [[06 - Testing/Phase 5 Completion Criteria]], [[06 - Testing/Phase 5 Independent Review]], [[09 - Performance/Dashboard]], [[07 - Operations/Disaster Recovery]].
 
 The initial development universe is not a historical point-in-time universe. All trading thresholds are hypotheses or explicit risk constraints. AI is optional and never authoritative over calculations or risk. Every research result must identify its data and simulation limitations.
 
@@ -31,4 +31,4 @@ The vault folder was renamed in place to `AI-Trading-Scanner`; all 79 pre-rename
 
 ## Executable foundation
 
-Phase 1 implements Python 3.13.15 packaging, validated opaque IDs, independent execution dimensions, fail-closed configuration and local health reporting. Phase 2 adds canonical OHLCV data, XNYS calendar/provenance/quality semantics and causal reads. Phase 3 adds deterministic EMA, RSI, ATR and VWAP. Phase 4 adds four versioned research baselines and immutable decisions/proposals over those inputs. Startup still rejects LIVE, ORDER_ENABLED and experiment execution. PAPER + FULL_AUTO remains representable while paper order submission remains disabled. See [[01 - Architecture/Market Data]], [[02 - Agents & Strategies/Experiment 1 Strategy Profiles]], [[02 - Agents & Strategies/Shared Agent Rules/Indicators]], [[07 - Operations/Setup]], [[07 - Operations/Configuration]] and [[06 - Testing/Test Strategy]].
+Phase 1 implements Python 3.13.15 packaging, validated opaque IDs, independent execution dimensions, fail-closed configuration and local health reporting. Phase 2 adds canonical OHLCV data and causal reads. Phase 3 adds deterministic EMA, RSI, ATR and VWAP. Phase 4 adds four versioned research baselines and immutable decisions/proposals. Phase 5 adds immutable risk/sizing/reservation contracts and local concurrency-safe allocation state. Startup still rejects LIVE, ORDER_ENABLED and experiment execution. PAPER + FULL_AUTO remains representable while paper order submission remains disabled. See [[01 - Architecture/Risk Engine]], [[01 - Architecture/Portfolio Accounting/Capital Allocation]], [[07 - Operations/Configuration]] and [[06 - Testing/Test Strategy]].

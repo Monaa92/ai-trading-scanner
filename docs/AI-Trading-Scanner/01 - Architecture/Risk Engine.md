@@ -1,6 +1,14 @@
 # Risk management
 
-Canonical risk specification, EUR50 baseline `risk-v0.1.0` with allocation-scope extension `risk-contract-v0.2.0`, 2026-09-13. Values are RISK CONSTRAINTS, not empirically optimal parameters. [[01 - Architecture/Portfolio Accounting/Position Sizing]] owns monetary formulas; [[00 - Project/Decisions/Risk History]] records changes.
+Canonical risk specification, EUR50 baseline `risk-v0.1.0` with allocation-scope extension `risk-contract-v0.2.0`, 2026-09-13. Phase 5 implements a reviewed-candidate subset in `ai_trading_scanner.risk`; it is not yet accepted or execution-capable. Values are RISK CONSTRAINTS, not empirically optimal parameters. [[01 - Architecture/Portfolio Accounting/Position Sizing]] owns monetary formulas; [[00 - Project/Decisions/Risk History]] records changes.
+
+## Phase 5 implemented boundary
+
+`RiskConfiguration` is immutable and content-identified. `BASELINE_RESEARCH_V1` retains the initial 1% risk and 3% drawdown values as unvalidated research configuration, while tests may construct explicit non-production limits. Phase 5 rejects float/non-finite inputs, LIVE-enabled policies, ownership/configuration/currency mismatches, wrong environments or approval policies, stale/expired/future proposals, applicable locks, drawdown breaches and capacity exhaustion.
+
+`RiskEngine.evaluate` is a pure preflight returning `APPROVED_FOR_RESERVATION` or typed rejection; that status is never approval for execution. It sizes with Decimal arithmetic from entry, protective stop and all supplied Phase 4 round-trip cost return components. Quantity floors to the configured generic increment. A Phase 4 `FINAL_QUANTITY` is exact approval-sensitive content: if it does not fit, risk rejects rather than silently shrinking it. `evaluate_for_reservation` repeats current checks and additionally requires `ORDER_ENABLED` and exact external approval evidence under `MANUAL_APPROVAL`; risk never manufactures approval.
+
+The implemented safety snapshot accepts externally computed drawdown/breach state and typed active locks. It does not calculate realized/unrealized P&L, daily session latches, FX, settlement or broker capability. Those dependencies remain unavailable rather than fabricated.
 
 ## Equity, cash and limits
 
