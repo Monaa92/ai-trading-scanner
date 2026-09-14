@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import timedelta
 from decimal import Decimal, localcontext
 from typing import Self
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from ai_trading_scanner.domain.content_identity import canonical_json_bytes
 from ai_trading_scanner.domain.execution import ApprovalPolicy, ExecutionEnvironment
-from ai_trading_scanner.market_data import CanonicalDataset, HistoricalBar
+from ai_trading_scanner.market_data import CanonicalDataset, HistoricalBar, UsEquitiesCalendar
 from ai_trading_scanner.risk import (
     ApprovalBinding,
     CapitalReservation,
@@ -28,7 +31,65 @@ from ai_trading_scanner.simulation.models import (
     validate_fill_against_order,
 )
 from ai_trading_scanner.simulation.portfolio import PositionChange, PositionChangeKind
-from ai_trading_scanner.strategies import TradeProposalDecision
+from ai_trading_scanner.strategies import TradeProposal, TradeProposalDecision
+
+
+def select_session_bounded_next_bar(
+    proposal: TradeProposal,
+    order: SimulatedOrder,
+    dataset: CanonicalDataset,
+) -> HistoricalBar:
+    """Select the V1 next bar without carrying an intraday order overnight."""
+    if (
+        dataset.dataset_id != proposal.dataset_id
+        or order.proposal_id != proposal.proposal_id
+        or order.instrument_id != proposal.instrument_id
+        or order.decision_at != proposal.as_of
+    ):
+        raise ValueError("order session inputs differ from the immutable proposal")
+    all_causal_bars = tuple(
+        bar
+        for bar in dataset.bars
+        if bar.instrument_id == proposal.instrument_id and bar.available_at <= proposal.as_of
+    )
+    if not all_causal_bars:
+        raise ValueError("dataset does not contain causal market data for the proposal")
+    latest = all_causal_bars[-1]
+    causal_bars = tuple(bar for bar in all_causal_bars if bar.session_id == latest.session_id)
+    if hashlib.sha256(canonical_json_bytes(causal_bars)).hexdigest() != (
+        proposal.market_data_slice_hash_sha256
+    ):
+        raise ValueError("dataset does not contain the proposal's exact causal market slice")
+    calendar = UsEquitiesCalendar()
+    session = calendar.session_for_date(
+        latest.start_at.astimezone(ZoneInfo(calendar.market_timezone)).date()
+    )
+    if (
+        session is None
+        or latest.session_id != session.session_id
+        or not calendar.contains_interval(latest.start_at, latest.end_at)
+        or order.submitted_at > session.close_at
+    ):
+        raise ValueError("proposal or order is not bound to its authoritative XNYS session")
+    effective_expiry = min(order.valid_until, session.close_at)
+    candidates = tuple(
+        sorted(
+            (
+                bar
+                for bar in dataset.bars
+                if bar.instrument_id == order.instrument_id
+                and bar.session_id == session.session_id
+                and session.open_at <= bar.start_at
+                and bar.end_at <= session.close_at
+                and bar.start_at > order.eligible_at
+                and bar.start_at < effective_expiry
+            ),
+            key=lambda bar: (bar.start_at, bar.end_at, bar.source_record_id or ""),
+        )
+    )
+    if not candidates:
+        raise ValueError("no eligible same-session execution bar exists before expiry")
+    return candidates[0]
 
 
 class ValidatedExecutionChain(BaseModel):
@@ -94,6 +155,13 @@ class ValidatedExecutionChain(BaseModel):
             or self.reservation.sizing_decision_id != sizing.sizing_decision_id
             or self.reservation.risk_configuration_id != self.risk_decision.risk_configuration_id
             or self.reservation.approved_quantity != sizing.quantity
+            or self.reservation.instrument_id != proposal.instrument_id
+            or self.reservation.currency != sizing.currency
+            or self.reservation.reserved_amount != sizing.reservation_amount
+            or self.reservation.reserved_downside != sizing.modeled_risk_amount
+            or self.reservation.created_at != self.risk_decision.evaluated_at
+            or self.reservation.transitioned_at != self.reservation.created_at
+            or self.reservation.expires_at != proposal.valid_until
         ):
             raise ValueError("active reservation does not match approved risk sizing")
         ownership = (
@@ -190,21 +258,9 @@ class ValidatedExecutionChain(BaseModel):
             raise ValueError("manual approval does not bind the submitted order terms")
 
     def _validated_next_bar(self) -> HistoricalBar:
-        candidates = tuple(
-            sorted(
-                (
-                    bar
-                    for bar in self.dataset.bars
-                    if bar.instrument_id == self.order.instrument_id
-                    and bar.start_at > self.order.eligible_at
-                    and bar.start_at < self.order.valid_until
-                ),
-                key=lambda bar: (bar.start_at, bar.end_at, bar.source_record_id or ""),
-            )
+        return select_session_bounded_next_bar(
+            self.strategy_decision.proposal, self.order, self.dataset
         )
-        if not candidates:
-            raise ValueError("no eligible canonical execution bar exists before expiry")
-        return candidates[0]
 
     def _validate_position_change(self) -> None:
         change = self.position_change

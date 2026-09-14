@@ -9,6 +9,7 @@ from simulation_helpers import (
     BASE,
     digest,
     execution_configuration,
+    execution_resolution,
     initial_portfolio,
     market_event,
     minimal_replay_artifact,
@@ -211,6 +212,7 @@ def test_future_fill_cannot_be_scheduled_before_its_causal_availability() -> Non
     order = simulated_order()
     source = market_event()
     fill = simulated_fill()
+    resolution = execution_resolution()
     malicious_fill_event = replay_event(
         ReplayPhase.FILL,
         order.eligible_at,
@@ -223,6 +225,11 @@ def test_future_fill_cannot_be_scheduled_before_its_causal_availability() -> Non
                 ReplayPhase.ORDER_SUBMISSION,
                 order.submitted_at,
                 payload_id=order.order_id,
+            ),
+            replay_event(
+                ReplayPhase.EXECUTION_RESOLUTION,
+                resolution.resolved_at,
+                payload_id=resolution.payload_id,
             ),
             malicious_fill_event,
             replay_event(
@@ -240,6 +247,7 @@ def test_future_fill_cannot_be_scheduled_before_its_causal_availability() -> Non
             market_events=(source,),
             orders=(order,),
             fills=(fill,),
+            execution_resolutions=(resolution,),
         )
 
 
@@ -265,7 +273,7 @@ def test_complete_artifact_rejects_unreconciled_fill() -> None:
             artifact.events[-1],
         )
     )
-    with pytest.raises(ValidationError, match="reconcile every fill"):
+    with pytest.raises(ValidationError, match="terminal fill-ready resolution"):
         _validate_changed_artifact(
             artifact,
             events=events,

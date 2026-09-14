@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from itertools import pairwise
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -26,6 +29,12 @@ from ai_trading_scanner.domain import (
     TradeProposalId,
 )
 from ai_trading_scanner.domain.content_identity import sha256_content_id_v2
+
+if TYPE_CHECKING:
+    from ai_trading_scanner.simulation.models import (
+        SimulatedFill,
+        SimulationRunManifest,
+    )
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -417,3 +426,286 @@ def calculate_realized_trade_result_id(
         ("quantity", "gross_pnl", "total_execution_costs", "net_pnl"),
     )
     return RealizedTradeResultId.parse(sha256_content_id_v2(content))
+
+
+@dataclass
+class _OpenPositionState:
+    position_id: PositionId
+    proposal_id: TradeProposalId
+    management_mandate_id: ManagementMandateId
+    instrument_id: InstrumentId
+    currency: str
+    opened_at: datetime
+    quantity: Decimal
+    average_entry_price: Decimal
+    original_quantity: Decimal
+    entry_fill_ids: list[SimulatedFillId] = dataclass_field(default_factory=list)
+    exit_fill_ids: list[SimulatedFillId] = dataclass_field(default_factory=list)
+    execution_costs: Decimal = Decimal(0)
+    realized_gross_pnl: Decimal = Decimal(0)
+    last_fill_price: Decimal = Decimal(0)
+    last_fill_at: datetime | None = None
+
+
+def reconcile_complete_portfolio(
+    manifest: SimulationRunManifest,
+    fills: tuple[SimulatedFill, ...],
+    changes: tuple[PositionChange, ...],
+    snapshots: tuple[PortfolioSnapshot, ...],
+    realized_trades: tuple[RealizedTradeResult, ...],
+) -> None:
+    """Derive and verify every COMPLETE V1 accounting projection.
+
+    This is a pure in-memory verifier, not a durable posting service. The V1
+    valuation policy marks an open position at its latest applied fill price;
+    a later market valuation contract is intentionally outside this foundation.
+    """
+    from ai_trading_scanner.simulation.models import SimulatedOrderSide
+
+    ordered_snapshots = tuple(
+        sorted(snapshots, key=lambda item: (item.as_of, str(item.portfolio_snapshot_id)))
+    )
+    initial = tuple(item for item in ordered_snapshots if item.previous_snapshot_id is None)
+    if len(initial) != 1 or ordered_snapshots[0] != initial[0]:
+        raise ValueError("complete accounting requires one earliest starting portfolio")
+    starting = initial[0]
+    if (
+        starting.positions
+        or starting.cash.currency != manifest.reporting_currency
+        or starting.cash.available_cash != manifest.starting_capital
+        or starting.cash.reserved_cash != 0
+        or starting.cash.committed_cash != 0
+        or starting.cash.total_cash != manifest.starting_capital
+        or starting.realized_gross_pnl != 0
+        or starting.unrealized_gross_pnl != 0
+        or starting.total_execution_costs != 0
+        or starting.gross_trading_pnl != 0
+        or starting.net_trading_pnl != 0
+        or starting.total_equity != manifest.starting_capital
+    ):
+        raise ValueError("starting portfolio is not the flat unencumbered run capital")
+    if fills and starting.as_of > min(fill.submitted_at for fill in fills):
+        raise ValueError("starting portfolio postdates the first submitted order")
+    if any(fill.currency != manifest.reporting_currency for fill in fills):
+        raise ValueError("fill currency differs from the single-currency run ledger")
+    for previous, current in pairwise(ordered_snapshots):
+        if current.previous_snapshot_id != previous.portfolio_snapshot_id:
+            raise ValueError("portfolio snapshot lineage is not chronological and contiguous")
+
+    fill_by_id = {fill.fill_id: fill for fill in fills}
+    if len(fill_by_id) != len(fills):
+        raise ValueError("complete accounting contains duplicate fills")
+    changed_fill_ids = tuple(change.fill_id for change in changes)
+    if len(set(changed_fill_ids)) != len(changed_fill_ids):
+        raise ValueError("one fill cannot be applied through multiple position changes")
+    if set(changed_fill_ids) != set(fill_by_id):
+        raise ValueError("complete accounting requires exactly one application per fill")
+
+    ordered_changes = tuple(
+        sorted(changes, key=lambda item: (item.changed_at, str(item.position_change_id)))
+    )
+    open_positions: dict[InstrumentId, _OpenPositionState] = {}
+    cash = manifest.starting_capital
+    realized_gross = Decimal(0)
+    total_costs = Decimal(0)
+    derived_trades: list[RealizedTradeResult] = []
+    change_index = 0
+
+    def apply(change: PositionChange) -> None:
+        nonlocal cash, realized_gross, total_costs
+        fill = fill_by_id[change.fill_id]
+        if (
+            change.run_id != fill.run_id
+            or change.account_id != fill.account_id
+            or change.allocation_id != fill.allocation_id
+            or change.agent_id != fill.agent_id
+            or change.proposal_id != fill.proposal_id
+            or change.order_id != fill.order_id
+            or change.changed_at != fill.fill_at
+        ):
+            raise ValueError("position change references a foreign or unrelated fill")
+        expected_position_id = calculate_position_id(
+            fill.run_id,
+            fill.account_id,
+            fill.allocation_id,
+            fill.agent_id,
+            fill.instrument_id,
+            fill.proposal_id,
+        )
+        if change.position_id != expected_position_id:
+            raise ValueError("position change identity does not match its fill lineage")
+        with localcontext(Context(prec=34, rounding=ROUND_HALF_EVEN)):
+            notional = fill.quantity * fill.fill_price
+            total_costs += fill.costs.total
+            if fill.side is SimulatedOrderSide.BUY:
+                if fill.instrument_id in open_positions:
+                    raise ValueError("V1 accounting does not permit scale-in applications")
+                if (
+                    change.kind is not PositionChangeKind.OPEN
+                    or change.previous_quantity != 0
+                    or change.quantity_delta != fill.quantity
+                    or change.new_quantity != fill.quantity
+                ):
+                    raise ValueError("buy fill is not applied as one exact OPEN transition")
+                cash -= notional + fill.costs.total
+                if cash < 0:
+                    raise ValueError("fill application would make portfolio cash negative")
+                open_positions[fill.instrument_id] = _OpenPositionState(
+                    position_id=change.position_id,
+                    proposal_id=change.proposal_id,
+                    management_mandate_id=change.management_mandate_id,
+                    instrument_id=fill.instrument_id,
+                    currency=fill.currency,
+                    opened_at=fill.fill_at,
+                    quantity=fill.quantity,
+                    average_entry_price=fill.fill_price,
+                    original_quantity=fill.quantity,
+                    entry_fill_ids=[fill.fill_id],
+                    execution_costs=fill.costs.total,
+                    last_fill_price=fill.fill_price,
+                    last_fill_at=fill.fill_at,
+                )
+                return
+
+            position = open_positions.get(fill.instrument_id)
+            if position is None or position.position_id != change.position_id:
+                raise ValueError("sell fill references no matching open position")
+            if (
+                change.previous_quantity != position.quantity
+                or change.quantity_delta != -fill.quantity
+                or change.new_quantity != position.quantity - fill.quantity
+                or change.management_mandate_id != position.management_mandate_id
+            ):
+                raise ValueError("sell fill quantity or mandate is not causally conserved")
+            expected_kind = (
+                PositionChangeKind.CLOSE
+                if change.new_quantity == 0
+                else PositionChangeKind.DECREASE
+            )
+            if change.kind is not expected_kind:
+                raise ValueError("sell fill position-change kind does not match residual quantity")
+            gross = fill.quantity * (fill.fill_price - position.average_entry_price)
+            cash += notional - fill.costs.total
+            realized_gross += gross
+            position.realized_gross_pnl += gross
+            position.execution_costs += fill.costs.total
+            position.quantity = change.new_quantity
+            position.exit_fill_ids.append(fill.fill_id)
+            position.last_fill_price = fill.fill_price
+            position.last_fill_at = fill.fill_at
+            if change.new_quantity == 0:
+                trade_content: dict[str, object] = {
+                    "schema_version": "realized-trade-result-v1",
+                    "run_id": manifest.run_id,
+                    "account_id": manifest.account_id,
+                    "allocation_id": manifest.allocation_id,
+                    "agent_id": manifest.agent_id,
+                    "strategy_id": manifest.strategy_id,
+                    "management_mandate_id": position.management_mandate_id,
+                    "position_id": position.position_id,
+                    "proposal_id": position.proposal_id,
+                    "entry_fill_ids": tuple(position.entry_fill_ids),
+                    "exit_fill_ids": tuple(position.exit_fill_ids),
+                    "opened_at": position.opened_at,
+                    "closed_at": fill.fill_at,
+                    "quantity": position.original_quantity,
+                    "gross_pnl": position.realized_gross_pnl,
+                    "total_execution_costs": position.execution_costs,
+                    "net_pnl": position.realized_gross_pnl - position.execution_costs,
+                }
+                derived_trades.append(
+                    RealizedTradeResult.model_validate(
+                        {
+                            "realized_trade_result_id": calculate_realized_trade_result_id(
+                                trade_content
+                            ),
+                            **trade_content,
+                        }
+                    )
+                )
+                del open_positions[fill.instrument_id]
+
+    for snapshot_index, snapshot in enumerate(ordered_snapshots):
+        if snapshot_index == 0:
+            continue
+        while change_index < len(ordered_changes) and (
+            ordered_changes[change_index].changed_at <= snapshot.as_of
+        ):
+            apply(ordered_changes[change_index])
+            change_index += 1
+        positions: list[PositionSnapshot] = []
+        for state in open_positions.values():
+            assert state.last_fill_at is not None
+            with localcontext(Context(prec=34, rounding=ROUND_HALF_EVEN)):
+                cost_basis = state.quantity * state.average_entry_price
+                market_value = state.quantity * state.last_fill_price
+                unrealized = market_value - cost_basis
+            positions.append(
+                PositionSnapshot(
+                    position_id=state.position_id,
+                    run_id=manifest.run_id,
+                    account_id=manifest.account_id,
+                    allocation_id=manifest.allocation_id,
+                    agent_id=manifest.agent_id,
+                    strategy_id=manifest.strategy_id,
+                    management_mandate_id=state.management_mandate_id,
+                    instrument_id=state.instrument_id,
+                    opened_by_proposal_id=state.proposal_id,
+                    currency=state.currency,
+                    opened_at=state.opened_at,
+                    marked_at=state.last_fill_at,
+                    quantity=state.quantity,
+                    average_entry_price=state.average_entry_price,
+                    mark_price=state.last_fill_price,
+                    gross_cost_basis=cost_basis,
+                    market_value=market_value,
+                    unrealized_gross_pnl=unrealized,
+                )
+            )
+        canonical_positions = tuple(sorted(positions, key=lambda item: str(item.position_id)))
+        with localcontext(Context(prec=34, rounding=ROUND_HALF_EVEN)):
+            unrealized_total = sum(
+                (position.unrealized_gross_pnl for position in canonical_positions), Decimal(0)
+            )
+            gross = realized_gross + unrealized_total
+            net = gross - total_costs
+            equity = manifest.starting_capital + net
+        expected_content: dict[str, object] = {
+            "schema_version": "portfolio-snapshot-v1",
+            "run_id": manifest.run_id,
+            "account_id": manifest.account_id,
+            "allocation_id": manifest.allocation_id,
+            "agent_id": manifest.agent_id,
+            "previous_snapshot_id": snapshot.previous_snapshot_id,
+            "as_of": snapshot.as_of,
+            "starting_capital": manifest.starting_capital,
+            "cash": CashLedgerSnapshot(
+                currency=manifest.reporting_currency,
+                available_cash=cash,
+                reserved_cash=Decimal(0),
+                committed_cash=Decimal(0),
+                total_cash=cash,
+            ),
+            "positions": canonical_positions,
+            "realized_gross_pnl": realized_gross,
+            "unrealized_gross_pnl": unrealized_total,
+            "total_execution_costs": total_costs,
+            "gross_trading_pnl": gross,
+            "net_trading_pnl": net,
+            "total_equity": equity,
+        }
+        expected = PortfolioSnapshot.model_validate(
+            {
+                "portfolio_snapshot_id": calculate_portfolio_snapshot_id(expected_content),
+                **expected_content,
+            }
+        )
+        if snapshot != expected:
+            raise ValueError("portfolio snapshot differs from derived chronological accounting")
+
+    if change_index != len(ordered_changes):
+        raise ValueError("final portfolio omits one or more accounting transitions")
+    if tuple(sorted(derived_trades, key=lambda item: str(item.realized_trade_result_id))) != tuple(
+        sorted(realized_trades, key=lambda item: str(item.realized_trade_result_id))
+    ):
+        raise ValueError("realized trades differ from the derived position lifecycle")

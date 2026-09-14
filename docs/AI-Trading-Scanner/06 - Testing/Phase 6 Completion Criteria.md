@@ -11,10 +11,10 @@ Phase 6 is complete only when one deterministic offline pipeline consumes canoni
 | Run identity | Immutable manifest binds dataset, participant ownership, strategy/model dimensions, indicator/risk/management/configuration, execution/cost models, starting capital and SIMULATION replay dimensions | Runner must resolve and retain the exact manifest and reject absent/mismatched artifacts |
 | Causal clocks | Market references separate interval/event/availability; orders separate decision/submission/eligibility/expiry; fills separate simulated execution from causal recording | Scheduler must prove no future bar/indicator/quality/portfolio/fill state enters a decision |
 | Event order | Versioned phase ranks and stable tie-break keys; canonical ordered trace validation | Discrete loop must emit the specified sequence independent of input/worker order |
-| Simulation execution | MARKET-only full-fill contract; strict later eligibility; next eligible bar open; missing-data expiry; gap-next-open; stop-first ambiguity; no randomness | Order status/cancel/reject, session/liquidity gates, fixed stop/target and reservation lifecycle must execute |
+| Simulation execution | MARKET-only full-fill contract; strict later eligibility; next eligible same-XNYS-session bar open; calendar-bounded expiry; typed unique terminal fill/unfilled/no-data/rejected resolution linkage; stop-first ambiguity; no randomness | Scheduler must emit terminal outcomes; order status/cancel behavior, liquidity gates, fixed stop/target and reservation lifecycle must execute |
 | Costs | Content-identified exact minimum/per-share/spread/slippage/other-fee components | Sourced `SIMULATED_IBKR_US_TIERED`, round-trip reconciliation, rounding/regulatory/FX behavior remain |
-| Portfolio | Cash partitions, long-only position, portfolio, position-change and realized-result conservation contracts | Idempotent fill posting, average-cost transitions, realized P&L, marks, close and failures remain |
-| Results | Content-identified result linkage and deterministic UTF-8 NDJSON trace bytes/hash | Atomic artifact bundle/store, restart, indexing, retention and dashboard inputs remain |
+| Portfolio | Cash partitions plus chronological in-memory COMPLETE reconciliation derive fill notional, costs, cash, open positions/cost basis, realized/unrealized/gross/net P&L, trades and equity; supplied snapshots/trades must match exactly | Transactional/idempotent posting service, durable ledger/restart, external marks, broader lifecycle and injected publication-failure recovery remain |
+| Results | Content-identified result linkage, typed terminal resolution references and deterministic UTF-8 NDJSON trace bytes/hash | Atomic artifact bundle/store, restart, indexing, retention and dashboard inputs remain |
 | Isolation/authority | Run/order/fill/position/result identities carry account, allocation and agent; SIMULATION + replay only; package has no broker/provider/network/AI imports | Multi-participant orchestration and adversarial cross-agent execution/storage tests remain |
 
 ## Completion gates
@@ -26,7 +26,7 @@ Phase 6 must not be marked COMPLETE until all of these pass:
 3. Phase 4 strategies evaluate only after those inputs are available; NO_TRADE remains a persisted normal outcome.
 4. Phase 5 risk and reservation receive the exact causally current participant/parent state.
 5. Simulation order state, expiry, rejection, cancellation, fill and fixed protection/exit behavior are deterministic and fail closed.
-6. A completed-bar decision cannot fill from the same bar; V1 fills use the next eligible bar open and are published only when its source becomes available.
+6. A completed-bar decision cannot fill from the same bar; V1 fills use the next eligible same-session bar open and are published only when its source becomes available.
 7. Reservation, cash, position, costs, realized/unrealized P&L and equity transition atomically and conserve value under duplicate/failure/replay cases.
 8. Gross and net trading P&L reproduce exactly; every commission/spread/slippage/fee is attributable and debited once.
 9. Same immutable dataset/configuration/state produces byte-identical ordered events, decisions, orders, fills, portfolios, result identities and P&L.

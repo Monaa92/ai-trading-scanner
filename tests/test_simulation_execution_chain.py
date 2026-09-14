@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -22,10 +22,12 @@ from ai_trading_scanner.market_data import (
     AvailabilityMode,
     CanonicalDataset,
     DataProvenance,
+    HistoricalBar,
     QualityStatus,
     Timeframe,
+    UsEquitiesCalendar,
 )
-from ai_trading_scanner.risk import RiskEngine
+from ai_trading_scanner.risk import CapitalReservation, RiskEngine, calculate_reservation_id
 from ai_trading_scanner.simulation import (
     MarketEventReference,
     PositionChange,
@@ -39,6 +41,7 @@ from ai_trading_scanner.simulation import (
     calculate_position_id,
     calculate_simulated_fill_id,
     calculate_simulated_order_id,
+    select_session_bounded_next_bar,
 )
 from ai_trading_scanner.strategies import (
     StrategyOutcome,
@@ -268,6 +271,116 @@ def _rebuild_fill(fill: SimulatedFill, **changes: object) -> SimulatedFill:
     )
 
 
+def _session_selection_fixture(
+    session_date: date,
+    *,
+    include_same_session_candidate: bool,
+    include_next_session_candidate: bool = False,
+    near_close: bool = False,
+) -> tuple[CanonicalDataset, TradeProposal, SimulatedOrder]:
+    chain = _valid_chain()
+    template = chain.dataset.bars[0]
+    calendar = UsEquitiesCalendar()
+    session = calendar.session_for_date(session_date)
+    assert session is not None
+    base = session.close_at - timedelta(minutes=20) if near_close else session.open_at
+
+    def bar(
+        index: int, *, start: datetime | None = None, session_id: str | None = None
+    ) -> HistoricalBar:
+        start_at = start or base + timedelta(minutes=index * 5)
+        content = template.model_dump(mode="python")
+        content.update(
+            {
+                "session_id": session_id or session.session_id,
+                "start_at": start_at,
+                "end_at": start_at + timedelta(minutes=5),
+                "available_at": start_at + timedelta(minutes=5, seconds=5),
+                "source_record_id": f"session-boundary-{start_at.isoformat()}",
+            }
+        )
+        return type(template).model_validate(content)
+
+    causal = (bar(0), bar(1))
+    bars = list(causal)
+    if include_same_session_candidate:
+        bars.append(bar(3))
+    if include_next_session_candidate:
+        next_date = session_date + timedelta(days=1)
+        next_session = calendar.session_for_date(next_date)
+        while next_session is None:
+            next_date += timedelta(days=1)
+            next_session = calendar.session_for_date(next_date)
+        bars.append(
+            bar(
+                0,
+                start=next_session.open_at,
+                session_id=next_session.session_id,
+            )
+        )
+    dataset = CanonicalDataset.create(chain.dataset.provenance, tuple(bars))
+    proposal_content = chain.strategy_decision.proposal.model_dump(
+        mode="python", exclude={"proposal_id"}
+    )
+    as_of = causal[-1].available_at
+    proposal_content.update(
+        {
+            "generated_at": as_of,
+            "as_of": as_of,
+            "valid_until": session.close_at + timedelta(days=3),
+            "dataset_id": dataset.dataset_id,
+            "market_data_slice_hash_sha256": hashlib.sha256(
+                canonical_json_bytes(causal)
+            ).hexdigest(),
+        }
+    )
+    proposal = TradeProposal.model_validate(
+        {"proposal_id": calculate_trade_proposal_id(proposal_content), **proposal_content}
+    )
+    order = _rebuild_order(
+        chain.order,
+        proposal_id=proposal.proposal_id,
+        instrument_id=proposal.instrument_id,
+        decision_at=as_of,
+        submitted_at=as_of,
+        eligible_at=as_of,
+        valid_until=proposal.valid_until,
+    )
+    return dataset, proposal, order
+
+
+def _chain_with_reidentified_reservation(**changes: object) -> dict[str, object]:
+    chain = _valid_chain()
+    reservation_content = chain.reservation.model_dump(mode="python")
+    reservation_content.update(changes)
+    reservation_content["reservation_id"] = calculate_reservation_id(reservation_content)
+    reservation = CapitalReservation.model_validate(reservation_content)
+    order = _rebuild_order(chain.order, reservation_id=reservation.reservation_id)
+    fill = _rebuild_fill(
+        chain.fill,
+        order_id=order.order_id,
+        reservation_id=reservation.reservation_id,
+    )
+    change_content = chain.position_change.model_dump(mode="python", exclude={"position_change_id"})
+    change_content.update({"order_id": order.order_id, "fill_id": fill.fill_id})
+    change = PositionChange.model_validate(
+        {
+            "position_change_id": calculate_position_change_id(change_content),
+            **change_content,
+        }
+    )
+    content = chain.model_dump(mode="python")
+    content.update(
+        {
+            "reservation": reservation,
+            "order": order,
+            "fill": fill,
+            "position_change": change,
+        }
+    )
+    return content
+
+
 def test_valid_chain_enforces_zero_latency_and_canonical_next_open() -> None:
     chain = _valid_chain()
     assert chain.order.eligible_at == chain.order.submitted_at
@@ -276,6 +389,83 @@ def test_valid_chain_enforces_zero_latency_and_canonical_next_open() -> None:
         for bar in chain.dataset.bars
         if bar.start_at == chain.fill.execution_interval_start_at
     )
+
+
+def test_exact_authoritative_reservation_economics_are_accepted() -> None:
+    chain = _valid_chain()
+    sizing = chain.risk_decision.sizing_decision
+    assert sizing is not None
+    assert chain.reservation.reserved_amount == sizing.reservation_amount
+    assert chain.reservation.reserved_downside == sizing.modeled_risk_amount
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"reserved_amount": Decimal("0.01")},
+        {"reserved_downside": Decimal("0.01")},
+        {"instrument_id": "XNYS:MSFT"},
+        {"currency": "EUR"},
+    ],
+    ids=["reserved-amount", "reserved-downside", "instrument", "currency"],
+)
+def test_reidentified_reservation_economic_tampering_is_rejected(
+    changes: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="reservation does not match approved risk sizing"):
+        ValidatedExecutionChain.model_validate(_chain_with_reidentified_reservation(**changes))
+
+
+def test_reidentified_reservation_creation_time_tampering_is_rejected() -> None:
+    chain = _valid_chain()
+    changed_at = chain.reservation.created_at + timedelta(seconds=1)
+    content = _chain_with_reidentified_reservation(
+        created_at=changed_at,
+        transitioned_at=changed_at,
+    )
+    with pytest.raises(ValidationError, match="reservation does not match approved risk sizing"):
+        ValidatedExecutionChain.model_validate(content)
+
+
+def test_valid_same_session_next_eligible_bar_is_selected() -> None:
+    dataset, proposal, order = _session_selection_fixture(
+        date(2024, 7, 2), include_same_session_candidate=True
+    )
+    selected = select_session_bounded_next_bar(proposal, order, dataset)
+    assert selected.session_id == dataset.bars[0].session_id
+
+
+def test_last_session_bar_absent_does_not_select_next_morning_open() -> None:
+    dataset, proposal, order = _session_selection_fixture(
+        date(2024, 7, 2),
+        include_same_session_candidate=False,
+        include_next_session_candidate=True,
+    )
+    with pytest.raises(ValueError, match="no eligible same-session"):
+        select_session_bounded_next_bar(proposal, order, dataset)
+
+
+def test_xnys_early_close_bounds_next_bar_without_hardcoded_time() -> None:
+    dataset, proposal, order = _session_selection_fixture(
+        date(2024, 7, 3),
+        include_same_session_candidate=True,
+        near_close=True,
+    )
+    selected = select_session_bounded_next_bar(proposal, order, dataset)
+    session = UsEquitiesCalendar().session_for_date(date(2024, 7, 3))
+    assert session is not None and session.early_close
+    assert selected.end_at <= session.close_at
+
+
+def test_xnys_dst_session_date_uses_authoritative_calendar_boundary() -> None:
+    dataset, proposal, order = _session_selection_fixture(
+        date(2024, 11, 4), include_same_session_candidate=True
+    )
+    selected = select_session_bounded_next_bar(proposal, order, dataset)
+    session = UsEquitiesCalendar().session_for_date(date(2024, 11, 4))
+    assert session is not None
+    assert selected.session_id == session.session_id
+    assert selected.end_at <= session.close_at
 
 
 @pytest.mark.parametrize("mismatch", ["cost", "execution", "quantity", "side", "price", "bar"])

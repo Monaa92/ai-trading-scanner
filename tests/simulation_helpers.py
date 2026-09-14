@@ -29,6 +29,8 @@ from ai_trading_scanner.domain.execution import (
 )
 from ai_trading_scanner.simulation import (
     CashLedgerSnapshot,
+    ExecutionResolutionOutcome,
+    ExecutionResolutionPayload,
     MarketEventReference,
     PortfolioSnapshot,
     ReplayArtifactBundle,
@@ -225,6 +227,23 @@ def simulated_fill(**changes: object) -> SimulatedFill:
     content.update(changes)
     return SimulatedFill.model_validate(
         {"fill_id": calculate_simulated_fill_id(content), **content}
+    )
+
+
+def execution_resolution(**changes: object) -> ExecutionResolutionPayload:
+    fill = simulated_fill()
+    content: dict[str, object] = {
+        "schema_version": "execution-resolution-payload-v2",
+        "run_id": fill.run_id,
+        "order_id": fill.order_id,
+        "resolved_at": fill.fill_at,
+        "outcome": ExecutionResolutionOutcome.FILL_READY,
+        "reason": None,
+        "source_market_event_id": fill.market_event.market_event_id,
+    }
+    content.update(changes)
+    return ExecutionResolutionPayload.model_validate(
+        {"payload_id": calculate_marker_payload_id(content), **content}
     )
 
 

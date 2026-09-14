@@ -1,6 +1,6 @@
 # Portfolio accounting
 
-Status: **PARTIAL — PHASE 6 CONTRACT FOUNDATION ONLY**. `ai_trading_scanner.simulation.portfolio` implements immutable Decimal accounting records and conservation validation. It does not yet apply fills, operate a ledger, persist state or complete a position lifecycle.
+Status: **PARTIAL — PHASE 6 CONTRACT FOUNDATION ONLY**. `ai_trading_scanner.simulation.portfolio` implements immutable Decimal accounting records plus a pure chronological verifier that derives COMPLETE V1 state from fills and position changes. It does not operate a transactional ledger, persist state, recover after failure or implement the complete runtime position lifecycle.
 
 ## Implemented V1 boundary
 
@@ -22,7 +22,7 @@ A `PortfolioSnapshot` accepts at most one open position per instrument, requires
 
 The last equality assumes no external flows inside a run segment. Capital changes require a new attributed segment under [[01 - Architecture/Portfolio Accounting/Capital Allocation]]. Execution costs are cash losses; spread/slippage are explicit cost components rather than a second adjustment to the stored gross fill price.
 
-`PositionChange` binds proposal, order, fill and management mandate to OPEN, DECREASE or CLOSE quantity transitions. `RealizedTradeResult` binds all entry/exit fill identities and requires `net_pnl = gross_pnl - total_execution_costs`. These are immutable audit contracts, not a transition engine. Position IDs include run, account, allocation, agent, instrument and opening proposal so shared infrastructure cannot merge participants.
+`PositionChange` binds proposal, order, fill and management mandate to OPEN, DECREASE or CLOSE quantity transitions. `RealizedTradeResult` binds all entry/exit fill identities and requires `net_pnl = gross_pnl - total_execution_costs`. For COMPLETE artifacts, the pure verifier starts from one flat unencumbered snapshot, applies each fill exactly once in causal order, debits its notional/cost once, derives open positions and closed trades, and requires every supplied snapshot and trade to equal the derived result. Open positions are marked at their latest applied fill price in this foundation until an authoritative external mark contract exists. This verifier validates an artifact already in memory; it is not a posting transaction or ledger service. Position IDs include run, account, allocation, agent, instrument and opening proposal so shared infrastructure cannot merge participants.
 
 ## Explicitly unavailable
 

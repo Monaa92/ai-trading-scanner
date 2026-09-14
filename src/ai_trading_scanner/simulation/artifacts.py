@@ -12,10 +12,12 @@ from ai_trading_scanner.domain import (
     AgentId,
     DatasetId,
     InstrumentId,
+    MarketEventId,
     PortfolioSnapshotId,
     RealizedTradeResultId,
     ReplayArtifactId,
     ReplayEventId,
+    SimulatedFillId,
     SimulatedOrderId,
     SimulationResultId,
     SimulationRunId,
@@ -40,6 +42,7 @@ from ai_trading_scanner.simulation.portfolio import (
     PortfolioSnapshot,
     PositionChange,
     RealizedTradeResult,
+    reconcile_complete_portfolio,
 )
 from ai_trading_scanner.strategies import NoTradeDecision, TradeProposalDecision
 
@@ -59,18 +62,27 @@ def _without_id(value: BaseModel | dict[str, object], field: str) -> dict[str, o
 class ExecutionResolutionOutcome(StrEnum):
     FILL_READY = "FILL_READY"
     EXPIRED_UNFILLED = "EXPIRED_UNFILLED"
+    NO_ELIGIBLE_DATA = "NO_ELIGIBLE_DATA"
+    REJECTED = "REJECTED"
+
+
+class ExecutionResolutionReason(StrEnum):
+    ORDER_VALIDITY_EXPIRED = "ORDER_VALIDITY_EXPIRED"
+    NO_ELIGIBLE_SAME_SESSION_BAR = "NO_ELIGIBLE_SAME_SESSION_BAR"
+    EXECUTION_POLICY_REJECTED = "EXECUTION_POLICY_REJECTED"
 
 
 class ExecutionResolutionPayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     payload_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    schema_version: Literal["execution-resolution-payload-v1"] = "execution-resolution-payload-v1"
+    schema_version: Literal["execution-resolution-payload-v2"] = "execution-resolution-payload-v2"
     run_id: SimulationRunId
     order_id: SimulatedOrderId
     resolved_at: datetime
     outcome: ExecutionResolutionOutcome
-    source_market_event_id: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    reason: ExecutionResolutionReason | None = None
+    source_market_event_id: MarketEventId | None = None
 
     @field_validator("resolved_at")
     @classmethod
@@ -79,6 +91,20 @@ class ExecutionResolutionPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self) -> Self:
+        expected_reason = {
+            ExecutionResolutionOutcome.FILL_READY: None,
+            ExecutionResolutionOutcome.EXPIRED_UNFILLED: (
+                ExecutionResolutionReason.ORDER_VALIDITY_EXPIRED
+            ),
+            ExecutionResolutionOutcome.NO_ELIGIBLE_DATA: (
+                ExecutionResolutionReason.NO_ELIGIBLE_SAME_SESSION_BAR
+            ),
+            ExecutionResolutionOutcome.REJECTED: (
+                ExecutionResolutionReason.EXECUTION_POLICY_REJECTED
+            ),
+        }[self.outcome]
+        if self.reason is not expected_reason:
+            raise ValueError("execution resolution outcome and reason are inconsistent")
         if (self.outcome is ExecutionResolutionOutcome.FILL_READY) != (
             self.source_market_event_id is not None
         ):
@@ -250,15 +276,6 @@ class ReplayArtifactBundle(BaseModel):
                 _PayloadBinding(kind=kind, payload_id=str(payload_id), causal_at=at, phase=phase)
             )
 
-        for resolution in self.execution_resolutions:
-            if resolution.run_id != run_id:
-                raise ValueError("execution resolution belongs to a foreign run")
-            add(
-                ReplayPayloadKind.EXECUTION_RESOLUTION,
-                resolution.payload_id,
-                resolution.resolved_at,
-                ReplayPhase.EXECUTION_RESOLUTION,
-            )
         for control in self.session_controls:
             if control.run_id != run_id:
                 raise ValueError("session control belongs to a foreign run")
@@ -331,6 +348,8 @@ class ReplayArtifactBundle(BaseModel):
             )
         order_by_id = {item.order_id: item for item in self.orders}
         market_by_id = {item.market_event_id: item for item in self.market_events}
+        fill_by_id: dict[SimulatedFillId, SimulatedFill] = {}
+        fills_by_order: dict[SimulatedOrderId, list[SimulatedFill]] = {}
         for fill in self.fills:
             self._require_run_ownership(fill)
             source_order = order_by_id.get(fill.order_id)
@@ -339,14 +358,73 @@ class ReplayArtifactBundle(BaseModel):
             validate_fill_against_order(fill, source_order)
             if market_by_id.get(fill.market_event.market_event_id) != fill.market_event:
                 raise ValueError("fill source market artifact is missing or differs")
+            fill_by_id[fill.fill_id] = fill
+            fills_by_order.setdefault(fill.order_id, []).append(fill)
             add(
                 ReplayPayloadKind.SIMULATED_FILL,
                 fill.fill_id,
                 fill.fill_at,
                 ReplayPhase.FILL,
             )
+        resolution_orders: set[SimulatedOrderId] = set()
+        for resolution in self.execution_resolutions:
+            if resolution.run_id != run_id:
+                raise ValueError("execution resolution belongs to a foreign run")
+            resolved_order = order_by_id.get(resolution.order_id)
+            if resolved_order is None:
+                raise ValueError("execution resolution references a missing simulated order")
+            if resolution.order_id in resolution_orders:
+                raise ValueError("simulated order has multiple terminal execution resolutions")
+            resolution_orders.add(resolution.order_id)
+            order_fills = fills_by_order.get(resolution.order_id, [])
+            if resolution.resolved_at < resolved_order.submitted_at:
+                raise ValueError("execution resolution predates order submission")
+            if resolution.outcome is ExecutionResolutionOutcome.FILL_READY:
+                source_market_event_id = resolution.source_market_event_id
+                assert source_market_event_id is not None
+                source = market_by_id.get(source_market_event_id)
+                if source is None:
+                    raise ValueError("fill-ready resolution references a missing market event")
+                if source.instrument_id != resolved_order.instrument_id:
+                    raise ValueError("execution resolution market instrument differs from order")
+                if len(order_fills) != 1:
+                    raise ValueError("fill-ready resolution requires exactly one matching fill")
+                fill = order_fills[0]
+                if (
+                    fill.market_event != source
+                    or fill.fill_at != resolution.resolved_at
+                    or source.available_at != resolution.resolved_at
+                ):
+                    raise ValueError("fill-ready resolution does not match its terminal fill")
+            else:
+                if order_fills:
+                    raise ValueError("unfilled terminal execution resolution cannot have a fill")
+                if (
+                    resolution.outcome is ExecutionResolutionOutcome.EXPIRED_UNFILLED
+                    and resolution.resolved_at < resolved_order.valid_until
+                ):
+                    raise ValueError("expired resolution predates order validity expiry")
+            add(
+                ReplayPayloadKind.EXECUTION_RESOLUTION,
+                resolution.payload_id,
+                resolution.resolved_at,
+                ReplayPhase.EXECUTION_RESOLUTION,
+            )
+        if any(order_id not in resolution_orders for order_id in fills_by_order):
+            raise ValueError("simulated fill has no terminal fill-ready resolution")
         for change in self.position_changes:
             self._require_run_ownership(change)
+            applied_fill = fill_by_id.get(change.fill_id)
+            source_order = order_by_id.get(change.order_id)
+            if applied_fill is None or source_order is None:
+                raise ValueError("position change references a missing fill or order")
+            if (
+                applied_fill.order_id != change.order_id
+                or applied_fill.proposal_id != change.proposal_id
+                or source_order.management_mandate_id != change.management_mandate_id
+                or applied_fill.fill_at != change.changed_at
+            ):
+                raise ValueError("position change references a foreign or unrelated fill")
             add(
                 ReplayPayloadKind.POSITION_CHANGE,
                 change.position_change_id,
@@ -384,19 +462,20 @@ class ReplayArtifactBundle(BaseModel):
         if set(finalization.realized_trade_result_ids) != set(trade_by_id):
             raise ValueError("result finalization realized trades do not match artifact")
         if finalization.status is SimulationResultStatus.COMPLETE:
-            fill_ids = {fill.fill_id for fill in self.fills}
-            changed_fill_ids = {change.fill_id for change in self.position_changes}
-            if fill_ids != changed_fill_ids:
-                raise ValueError(
-                    "complete result does not reconcile every fill to portfolio changes"
-                )
-            trade_fill_ids = {
-                fill_id
-                for trade in self.realized_trades
-                for fill_id in (*trade.entry_fill_ids, *trade.exit_fill_ids)
-            }
-            if not trade_fill_ids.issubset(fill_ids):
-                raise ValueError("complete result realized trades reference missing fills")
+            if set(order_by_id) != resolution_orders:
+                raise ValueError("complete result requires one terminal resolution per order")
+            if final_portfolio != max(
+                self.portfolio_snapshots,
+                key=lambda item: (item.as_of, str(item.portfolio_snapshot_id)),
+            ):
+                raise ValueError("complete result does not reference the latest portfolio")
+            reconcile_complete_portfolio(
+                self.manifest,
+                self.fills,
+                self.position_changes,
+                self.portfolio_snapshots,
+                self.realized_trades,
+            )
             accounting_times = [
                 *(fill.fill_at for fill in self.fills),
                 *(change.changed_at for change in self.position_changes),

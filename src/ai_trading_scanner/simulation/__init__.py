@@ -3,6 +3,7 @@
 from ai_trading_scanner.simulation.artifacts import (
     ExecutionResolutionOutcome,
     ExecutionResolutionPayload,
+    ExecutionResolutionReason,
     IndicatorUpdatePayload,
     ReplayArtifactBundle,
     ResultFinalizationPayload,
@@ -61,6 +62,7 @@ from ai_trading_scanner.simulation.portfolio import (
 )
 from ai_trading_scanner.simulation.validation import (
     ValidatedExecutionChain,
+    select_session_bounded_next_bar,
     validate_execution_chain,
 )
 
@@ -68,6 +70,7 @@ __all__ = [
     "CashLedgerSnapshot",
     "ExecutionResolutionOutcome",
     "ExecutionResolutionPayload",
+    "ExecutionResolutionReason",
     "FillCostBreakdown",
     "FillPricePolicy",
     "GapPolicy",
@@ -116,6 +119,7 @@ __all__ = [
     "calculate_simulation_result_id",
     "calculate_simulation_run_id",
     "order_replay_events",
+    "select_session_bounded_next_bar",
     "serialize_replay_events",
     "validate_execution_chain",
     "validate_fill_against_order",
