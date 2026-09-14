@@ -1,16 +1,16 @@
 # Backtesting methodology
 
-Canonical execution specification, PROVISIONAL simulation model. Use a **hybrid** design: causally validated vectorized features for efficiency, event-driven strategy/portfolio/risk/order accounting for correctness. A vectorized return series alone cannot represent cash reservations, daily lockouts, ambiguous fills and partial orders. [[01 - Architecture/Market Data]] owns availability semantics; [[01 - Architecture/Execution/Order Lifecycle]] owns intent/state invariants.
+Canonical execution specification, PROVISIONAL simulation model. Phase 6 is **IN PROGRESS**: immutable run/event/order/fill/accounting/result contracts and canonical event serialization are implemented, but the scheduler and end-to-end simulator are not. Use a **hybrid** design: causally validated vectorized features for efficiency, event-driven strategy/portfolio/risk/order accounting for correctness. A vectorized return series alone cannot represent cash reservations, daily lockouts, ambiguous fills and partial orders. [[01 - Architecture/Market Data]] owns availability semantics; [[01 - Architecture/Execution/Order Lifecycle]] owns intent/state invariants; [[00 - Project/Decisions/ADR-033 - Deterministic Phase 6 replay foundation]] fixes the foundation ordering and fill convention.
 
 ## Clocks and information boundary
 
 The simulation has separate market event time, data availability time and execution eligibility. The strategy sees only an available-data view at decision_at. The execution simulator may inspect an execution interval to resolve modeled fills, but cannot expose future OHLC/volume to strategy/risk. Features must produce identical decisions on prefixes. No signal based on C_t fills at an earlier price inside bar t.
 
-For bar-only simulation, an entry becomes executable at the first execution-bar **open strictly later than** submission time + modeled routing latency, while the intent is unexpired and the session is open. Strict inequality avoids assuming access to a boundary print simultaneous with a decision. A 5-minute bar ending 10:05, published at 10:05:02, can first use a 5-minute execution open at 10:10, not 10:05. With 1-minute execution bars it can first use 10:06. These are conservative discretization delays and must appear in reports. If there is no eligible boundary before expiry, record no fill. Higher-resolution quote/trade mode can use the first qualifying event after eligibility with sequence order.
+For bar-only simulation, an entry becomes executable at the first execution-bar **open strictly later than** submission time + modeled routing latency, while the intent is unexpired and the session is open. Strict inequality avoids assuming access to a boundary print simultaneous with a decision. A 5-minute bar ending 10:05, published at 10:05:02, can first use a 5-minute execution open at 10:10, not 10:05. With 1-minute execution bars it can first use 10:06. The logical execution time is the later interval open; the fill is not published to replay consumers until that source bar's `available_at`, when its open is present in the historical dataset. Fills and resulting portfolio state are processed before strategy evaluation at that availability boundary. These conservative discretization delays must appear in reports. If there is no eligible boundary before expiry, record no fill. Higher-resolution quote/trade mode can later use the first qualifying event after eligibility with sequence order.
 
 ## Stable event ordering
 
-Replay events ordered by `(simulation_time, causal_phase, provider_sequence_or_stable_id)`. Never reorder actual captured fill facts to improve results. At each time boundary:
+Replay events are ordered by `(scheduled_at, causal_phase, stable_tie_break_key)`. The Phase 6 V1 phase ranks are content-versioned as execution resolution, fill, portfolio update, session control, market-data availability, indicator update, strategy evaluation, risk evaluation, order submission and result finalization. Never reorder actual captured fill facts to improve results. At each time boundary:
 
 1. Resolve the just-finished execution interval for orders eligible **before** the interval began, using only modeled paths consistent with its data and the trading status applicable within that interval. Apply fees/fills and protective exits; do not use newly generated signals here. A halt first occurring at the ending boundary cannot retroactively suppress a fill earlier in that interval.
 2. Apply broker/fill/correction and market/status events occurring at the boundary in recorded sequence (or the pinned deterministic tie-break where sequence is unavailable). Halts now block subsequent execution. Reconcile ledger and reservations before assessing new exposure; captured higher-resolution events are processed at their own times instead of being delayed to bar boundaries.
@@ -26,11 +26,11 @@ Step 1 is bar-mode accounting at interval resolution: logical execution events c
 
 V1 reference experiments use market entries and fixed stop/target exits. Other order types below are designed for later capability-tested experiments and cannot be substituted silently.
 
-The reference simulator models linked protection becoming active immediately after an opening entry fill. This is a PROVISIONAL atomic-protection assumption, not a verified broker capability. Stress delayed/rejected protection explicitly; quote/trade replay uses observed or configured protection-activation latency. Broker paper entries require separately verified protection under [[01 - Architecture/Execution/Order Lifecycle]]. Never present zero modeled protection delay as measured live safety.
+The complete reference simulator will model linked protection becoming active immediately after an opening entry fill. This is a PROVISIONAL atomic-protection assumption, not yet implemented and not a verified broker capability. Stress delayed/rejected protection explicitly; quote/trade replay uses observed or configured protection-activation latency. Broker paper entries require separately verified protection under [[01 - Architecture/Execution/Order Lifecycle]]. Never present zero modeled protection delay as measured live safety.
 
 | Case | Conservative policy |
 | --- | --- |
-| Market entry/exit | First eligible open, adverse half-spread if reference is not already side-specific, plus adverse modeled slippage/impact; commissions/fees separately |
+| Market entry/exit | V1 foundation records the first eligible open as gross fill reference. Commission, adverse spread, slippage and other fees are explicit monetary components deducted once from net economics; they are not also shifted into the stored fill price. |
 | Buy limit | Once active for full interval, require price penetration beyond limit by the registered tick buffer; mere touch insufficient. Fill at limit (no favorable improvement assumption), capped by capacity; expire per intent policy. Never fill above limit. |
 | Sell target limit | Require strict penetration above limit under registered spread/penetration policy; fill at limit, not favorable high/open; exit quantity ≤ position |
 | Sell stop | If opening below stop, use adverse opening executable price minus slippage; otherwise if low reaches stop, use stop minus spread/slippage allowances. Stop price is not guaranteed. |
@@ -38,7 +38,7 @@ The reference simulator models linked protection becoming active immediately aft
 | Both stop and target touched | For an already open position, choose stop first unless higher-resolution evidence establishes ordering; record ambiguity and alternate outcome sensitivity |
 | Entry and exit same interval | Entry at eligible open permits stop/target evaluation afterward with stop-first on ambiguity. Intrabar limit entry uses only feasible adverse paths; if order could have filled then stopped, charge stop; do not award target-only profit without ordering evidence. Flag uncertainty. |
 | Gap invalidates geometry | An already eligible order can still fill adversely; record risk breach and controlled exit. Do not retroactively reject the entry using gap information unavailable at submission. |
-| Partial fills | q_fill ≤ remaining quantity and versioned participation cap × eligible interval volume, rounded down. Remaining quantity retains reservation; protect filled quantity. Volume-based capacity is a proxy, not known queue liquidity. |
+| Partial fills | Explicitly deferred in the foundation execution model; `partial_fills_supported=false` fails closed. A later version may use q_fill ≤ remaining quantity and a versioned participation cap, with retained reservation and immediate protection of the filled quantity. |
 | Fees/costs | Apply actual model including minimums, rounding and FX per leg; report net after costs. Zero costs require evidence or an explicitly non-evidential diagnostic label. |
 | Spread | Quote-side execution preferred. Bar-only proxy is explicit and stressed; no assumption OHLC is a tradable bid/ask pair. |
 | Market impact | Registered conservative quantity/participation allowance, stressed even for small capital; not inferred absent from paper results |
@@ -57,7 +57,18 @@ Flatten is a scheduled policy known before the session, not a decision using the
 
 1-minute bars are the first useful upgrade from 5-minute execution: they resolve ordering across minutes, not within a minute. To resolve finer trigger/entry/stop order, need ordered trade prints and bid/ask quotes with timestamps, sequence, conditions and status. Depth/queue data plus a defensible routing model are needed for queue/impact realism; even ticks do not prove a counterfactual order would fill. Clearly label assumed spread, liquidity, publication delay and corrections when historical sources do not preserve them.
 
-Run output contains complete [[07 - Operations/Configuration]] manifest, event/fill ledger, rejection reasons, data-quality and ambiguity report, equity curve and [[09 - Performance/Performance Metrics]]. Failed/aborted runs retain artifacts. Small deterministic fixtures must pin event trace as well as final P&L; performance alone can hide temporal bugs.
+Run output will contain the complete [[07 - Operations/Configuration]] manifest, event/fill ledger, rejection reasons, data-quality and ambiguity report, equity curve and [[09 - Performance/Performance Metrics]]. Failed/aborted runs retain artifacts. Small deterministic fixtures must pin event trace as well as final P&L; performance alone can hide temporal bugs.
+
+The implemented foundation serializes already validated, canonically ordered event envelopes as UTF-8 NDJSON and hashes the exact bytes. It also content-identifies manifests, execution/cost configurations, market references, orders, fills, portfolio records and results. This is a deterministic artifact contract, not a durable store: atomic file publication, indexing, restart recovery and a final directory/bundle writer remain Phase 6 work. Obsidian remains derived documentation and never receives raw telemetry.
+
+## Boundary from future validation modes
+
+- **Backtest/replay:** deterministic processing of frozen historical or captured data under a simulation clock. It can establish reproducibility under declared assumptions, not real execution.
+- **Simulation execution:** the offline order/fill/accounting model used inside replay. It has no external account, credentials, network or broker authority.
+- **Forward test:** future prospective observation against data arriving after configuration freeze. It may remain SIGNAL_ONLY and use the simulator; wall-clock arrival and outage evidence are retained rather than rewritten as historical availability.
+- **Paper trading:** future broker-hosted simulated execution under the PAPER environment and [[06 - Testing/Paper Trading]] reconciliation rules. It is not Phase 6 simulation and does not imply LIVE.
+
+Never combine results from these modes without preserving their distinct data/run mode, execution environment, clock, cost and execution-model identities.
 
 ## Multi-agent and management replay
 

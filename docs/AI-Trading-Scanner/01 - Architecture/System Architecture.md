@@ -1,6 +1,6 @@
 # Architecture
 
-Status: design baseline, 2026-09-13. See [governance](../../PROJECT_RULES.md) and [[01 - Architecture/System Components]] for ownership and contracts.
+Status: design baseline with Phase 6 contract foundation, 2026-09-14. Immutable simulation run/event/order/fill, cost, portfolio and result contracts exist; the replay engine and persistence do not. See [governance](../../PROJECT_RULES.md) and [[01 - Architecture/System Components]] for ownership and contracts.
 
 Use a modular Python monolith initially: one fenced writer per funding account, a deterministic domain core and adapters around it. PostgreSQL is the intended durable store. FastAPI is the future application boundary; Next.js/TypeScript/Tailwind and TradingView Lightweight Charts are future presentation choices. pandas/NumPy may compute features, but do not own time or order semantics. pytest is the intended Python test tool. None is installed or integrated by this pass.
 
@@ -18,7 +18,7 @@ flowchart LR
   Approval --> Revalidate[Final risk and safety revalidation]
   Revalidate --> Intent[Durable order intent and outbox]
   Intent --> Adapter[BrokerAdapter]
-  Adapter --> Simulation[SimulationBroker - planned]
+  Adapter --> Simulation[SimulationBroker - contracts only]
   Adapter -. future .-> IBKR[IBKR]
   Adapter -. future crypto only .-> Kraken[Kraken]
   Simulation --> Ledger
@@ -33,7 +33,7 @@ Backtesting is hybrid: vectorized, causally checked features plus an event-drive
 
 Deterministic: normalization under pinned rules, calendar lookup, indicators, features, strategy, risk, accounting, state transitions, metrics, selection tie-breaks and seeded simulation replay. Probabilistic: optional AI and explicitly seeded stress execution models. Actual broker/network behavior is external, observed and recorded, not reproducible by assumption.
 
-Use immutable run manifests and append-only decision/fill events; rebuildable projections avoid a full event-sourced platform for every table. Domain records carry agent, allocation, account, data/run mode, execution environment, submission mode, approval policy, operating context, strategy, model, management, performance-kind and experiment/run IDs. This leaves room for more users/providers later without implementing SaaS tenancy, subscriptions or distributed services now.
+Use immutable run manifests and append-only decision/fill events; rebuildable projections avoid a full event-sourced platform for every table. The Phase 6 foundation implements content-identified run/event/order/fill/portfolio/result records and canonical NDJSON event bytes, but no loop or store. Domain records carry agent, allocation, account, data/run mode, execution environment, submission mode, approval policy, operating context, strategy, model, management, performance-kind and experiment/run IDs. This leaves room for more users/providers later without implementing SaaS tenancy, subscriptions or distributed services now.
 
 Critical ordering and invariants live in [[01 - Architecture/Market Data]], [[06 - Testing/Backtesting]], [[01 - Architecture/Risk Engine]], [[01 - Architecture/Execution/Order Lifecycle]] and [[01 - Architecture/AI Architecture]]. [[10 - Archive/Reviews/Architecture Review]] maps the 25 design questions to decisions and blockers.
 

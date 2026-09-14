@@ -46,3 +46,9 @@ ADRs 017–024 extend the initial design. ADR-021 clarifies that ADR-004/008/014
 - [[00 - Project/Decisions/ADR-032 - Strategy-specific profit management]]
 
 ADRs 025–032 are design decisions only. ADR-026 supersedes only ADR-006's future execution-provider preference while retaining ADR-006 and the provider-abstraction principle. ADR-032 extends ADR-024: the fixed baseline remains unchanged and dynamic policies still require separate validation. No adapter, cost schedule, budget, strategy or storage service is implemented by these decisions.
+
+## Phase 6 foundation — 2026-09-14
+
+- [[00 - Project/Decisions/ADR-033 - Deterministic Phase 6 replay foundation]]
+
+ADR-033 specifies the content-identified discrete-event ordering, next-eligible-bar-open fill boundary, explicit no-double-count cost treatment and canonical local event serialization for the Phase 6 foundation. It does not mark Phase 6 complete or authorize broker, PAPER or LIVE execution.

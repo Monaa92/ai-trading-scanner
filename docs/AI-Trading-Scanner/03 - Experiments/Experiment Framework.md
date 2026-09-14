@@ -1,6 +1,6 @@
 # Experiment design and promotion
 
-Status: required future process, no experiments run. The Phase 5 candidate supplies deterministic risk/allocation contracts but no runner, durable ledger or simulation broker. Start future work with a deterministic baseline, no AI, fixed capital/risk model, and cash/no-trade control. Treat EUR 50 execution infeasibility as a research outcome.
+Status: required future process, no experiments run. Phase 5 supplies deterministic risk/allocation contracts. The Phase 6 foundation adds simulation/accounting/result contracts but no scheduler, runner, durable ledger or simulation broker. Start future work with a deterministic baseline, no AI, fixed capital/risk model, and cash/no-trade control. Treat EUR 50 execution infeasibility as a research outcome.
 
 ## Registration and splits
 

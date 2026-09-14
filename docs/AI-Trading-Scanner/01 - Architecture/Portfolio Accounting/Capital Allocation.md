@@ -12,6 +12,8 @@ Reservation acquires a proposal-specific duplicate guard, resolves the scope und
 
 This is an in-process concurrency contract, not durable accounting. Process loss, multiple workers, multiple coordinator instances and database failures are not covered; proposal uniqueness is process-local. Before Phase 6 can treat reservations as authoritative across restarts, the same read→validate→reserve parent+agent→persist reservation→commit boundary must use durable transactional storage, optimistic revisions/fencing and recovery evidence.
 
+The Phase 6 foundation adds separate immutable [[01 - Architecture/Portfolio Accounting/Portfolio Accounting]] records for cash partitions, positions, portfolio snapshots and realized results. It does not yet connect them to this coordinator. Reservation consumption/release and fill/accounting publication must become one tested causal transition before Phase 6 can be complete; contract objects alone do not close the durability or lifecycle gap.
+
 ## Three different quantities
 
 - **Broker account equity:** all marked assets/cash less liabilities in the funding account, including unallocated assets and other agents. Never supplied as every agent's sizing balance.

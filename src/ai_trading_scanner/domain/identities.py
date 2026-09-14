@@ -125,3 +125,51 @@ class SafetyStateId(Identifier):
 
 class ApprovalBindingId(Identifier):
     """Content-derived identity of immutable future approval evidence."""
+
+
+class SimulationRunId(Identifier):
+    """Content-derived identity of an immutable simulation run manifest."""
+
+
+class SimulationExecutionModelId(Identifier):
+    """Content-derived identity of a versioned simulation execution model."""
+
+
+class TransactionCostModelId(Identifier):
+    """Content-derived identity of a versioned transaction-cost model."""
+
+
+class MarketEventId(Identifier):
+    """Content-derived identity of a market event used during replay."""
+
+
+class ReplayEventId(Identifier):
+    """Content-derived identity of an ordered replay event envelope."""
+
+
+class SimulatedOrderId(Identifier):
+    """Content-derived identity of an immutable simulated order intent."""
+
+
+class SimulatedFillId(Identifier):
+    """Content-derived identity of an immutable simulated fill."""
+
+
+class PositionId(Identifier):
+    """Identity of one long-only position episode."""
+
+
+class PositionChangeId(Identifier):
+    """Content-derived identity of an immutable position change."""
+
+
+class PortfolioSnapshotId(Identifier):
+    """Content-derived identity of an immutable portfolio snapshot."""
+
+
+class RealizedTradeResultId(Identifier):
+    """Content-derived identity of an immutable realized trade result."""
+
+
+class SimulationResultId(Identifier):
+    """Content-derived identity of an immutable simulation result."""

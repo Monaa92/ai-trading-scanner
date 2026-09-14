@@ -1,6 +1,6 @@
 # Gated roadmap
 
-Phases 1–5 are complete on `main`. PR #4 independently reviewed candidate `90764dc7d6cca035da9fbe28cd4989f23399ea6e`; `Dekkerszz` returned PASS, and GitHub merged/closed it as `d08faa7ca3fdd3f35a053838f736d4d709d503d9`. Phase 6 is next and has not started. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
+Phases 1–5 are complete on `main`. Phase 6 is **IN PROGRESS** on its feature branch with architecture and immutable contract foundations only. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
 
 | Phase | Deliverable | Exit criterion |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ Phases 1–5 are complete on `main`. PR #4 independently reviewed candidate `907
 | 3 | Deterministic indicators — COMPLETE | Exact formulas, seeds/session/gaps, warning lineage, prefix invariance and batch/incremental fixtures pass; independently reviewed, approved and merged in PR #2 (`0cf0497`) |
 | 4 | Strategy and proposal contracts — COMPLETE | Registered unoptimized `BASELINE_RESEARCH_V1` parameters, four independent profiles, first-class NO_TRADE, model/profile independence, agent-scoped pure evaluations and deterministic proposal/management identities; no order submission. Independently reviewed and merged through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`). |
 | 5 | Risk/allocation/safety — COMPLETE | Decimal sizing against scoped/fresh current loss/headroom; sizing bound to proposal, configuration and evaluated state; exclusive parent allocation ownership; atomic public scope registration; one registered allocation per agent/coordinator context; exception-atomic parent+agent in-memory reservation/lifecycle publication; proposal-wide uniqueness; expiry-safe replay/lifecycle; relational risk evidence; partitioned scoped locks; conservation and approval-binding behavior implemented. PR #4 was independently approved by `Dekkerszz` and merged as `d08faa7ca3fdd3f35a053838f736d4d709d503d9`. |
-| 6 | Causal backtesting and simulation — NEXT, NOT STARTED | Causal SimulationBroker lifecycle, isolated participants, versioned round-trip costs, fixed management, decision/approval replay where valid, audit and core metrics pass |
+| 6 | Causal backtesting and simulation — IN PROGRESS | Foundation: content-identified causal events/run/execution/cost/order/fill/portfolio/result contracts and deterministic event serialization. Remaining: scheduler, Phase 2–5 orchestration, lifecycle/accounting transitions, durable artifacts, end-to-end/adversarial evidence and independent review. |
 | 7 | Historical validation | Registered comparable evidence, rejection/counterfactual separation and failed experiments retained |
 | 7a | Optional management hypotheses | Separately specified/versioned dynamic policy and fixed-baseline comparison before any use |
 | 8 | Broker paper integration | Verified fractional protection, attribution, idempotency/reconciliation and kill switch; live unavailable |
@@ -29,4 +29,4 @@ Phases 1–5 are complete on `main`. PR #4 independently reviewed candidate `907
 
 Autonomous paper experiments are controlled research after historical/paper validation. They do not advance operational live autonomy. The four profile names are hypotheses, not permission to invent missing parameters or activate unvalidated management. A deterministic-only program can skip AI phases, documenting that choice, then validate manual operation. Core accounting/audit/statistics begin before research, not postponed to Phase 10.
 
-Exact next action: **Phase 6 — causal backtesting and simulation**, only after a separately scoped implementation task. No order submission, broker integration, PAPER or LIVE operation is authorized.
+Exact next action: **continue Phase 6 with the causal scheduler and Phase 2→3 replay increment** under a separately bounded task. Phase 7, external order submission, broker integration, PAPER and LIVE remain unauthorized.
