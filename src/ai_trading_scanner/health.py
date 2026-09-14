@@ -11,6 +11,7 @@ from ai_trading_scanner.config.models import FoundationConfig
 from ai_trading_scanner.domain.execution import ApprovalPolicy, ExecutionEnvironment, SubmissionMode
 from ai_trading_scanner.indicators import validate_offline_indicator_fixture
 from ai_trading_scanner.market_data import UsEquitiesCalendar, validate_offline_fixture
+from ai_trading_scanner.risk import validate_offline_risk_fixture
 from ai_trading_scanner.strategies import validate_offline_strategy_fixture
 
 
@@ -35,6 +36,7 @@ class HealthReport(BaseModel):
     synthetic_fixture_validated: Literal[True]
     deterministic_indicators_validated: Literal[True]
     strategy_contracts_validated: Literal[True]
+    risk_contracts_validated: Literal[True]
 
 
 def build_health_report(settings: FoundationConfig) -> HealthReport:
@@ -48,6 +50,8 @@ def build_health_report(settings: FoundationConfig) -> HealthReport:
         raise RuntimeError("deterministic indicator fixture failed validation")
     if not validate_offline_strategy_fixture():
         raise RuntimeError("registered strategy contract fixture failed validation")
+    if not validate_offline_risk_fixture():
+        raise RuntimeError("risk and allocation contract fixture failed validation")
     return HealthReport(
         status="healthy",
         application="ai-trading-scanner",
@@ -65,4 +69,5 @@ def build_health_report(settings: FoundationConfig) -> HealthReport:
         synthetic_fixture_validated=True,
         deterministic_indicators_validated=True,
         strategy_contracts_validated=True,
+        risk_contracts_validated=True,
     )

@@ -1,6 +1,6 @@
 # Backend architecture
 
-Status: mostly design specification. Phases 1–4 implement the offline configuration, historical-data, deterministic-indicator and pure Strategy/proposal foundations. Phase 4 implements the pure Strategy boundary and immutable decision/proposal contracts in `strategies`; risk, portfolio, execution, broker and persistence boundaries remain specifications. Parent: [[01 - Architecture/System Architecture]].
+Status: mostly design specification. Phases 1–4 implement the offline data/indicator/strategy foundations. The Phase 5 candidate implements pure risk sizing and a concurrency-safe in-memory parent/allocation reservation boundary in `risk`; full portfolio accounting, durable persistence, execution and broker boundaries remain specifications. Parent: [[01 - Architecture/System Architecture]].
 
 ## Ownership and dependency direction
 
@@ -38,7 +38,8 @@ No strategy→broker, strategy→market-data provider, indicator→LLM, domain�
 | AvailableData | snapshot(as_of, instrument, requirements) → only records with availability ≤ as_of, plus missing/quality flags |
 | IndicatorEngine | evaluate(ordered bars, implementation version, state) → values, ready flags, dependency IDs, next state |
 | StrategyEngine | `evaluate(StrategyEvaluationContext, immutable configuration) → NO_TRADE | TRADE_PROPOSAL`; implemented as a pure Phase 4 boundary with structured evidence and no side effects |
-| RiskEngine | assess(proposal, account, quote, FX, limits, capabilities, time) → reject or bounded quantity, modeled loss/cost, expiry and snapshot IDs |
+| RiskEngine | Phase 5 implemented subset: evaluate immutable proposal + parent/allocation/safety snapshots + versioned limits + explicit time → typed rejection or bounded quantity; no order authority |
+| AllocationCoordinator | Phase 5 in-memory implementation: parent-locked exclusive allocation registration, proposal→parent→allocation scoped reservation locks, fresh risk/approval checks, all-or-none reservation and idempotent terminal lifecycle; durable transaction port remains future |
 | BrokerPort | capabilities/account/orders/fills/positions; submit(intent, stable client ID); cancel(order ID); lookup(client ID) → typed result/event |
 | AIProvider | evaluate(allowlisted context, frozen model/prompt/schema config, deadline) → untrusted structured response envelope |
 | UnitOfWork | atomically persist decision, reservation, intent, audit and outbox using expected account revision → commit/retry conflict |

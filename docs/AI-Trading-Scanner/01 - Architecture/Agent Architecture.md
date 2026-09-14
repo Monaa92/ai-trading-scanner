@@ -1,6 +1,6 @@
 # Multi-agent architecture
 
-Extension baseline: 2026-09-14. A trading agent is an independently configured participant, not an LLM instance. Phase 4 implements pure agent-attributed strategy decisions and immutable proposal intent without accounts or execution. One deterministic participant may use no AI; one future AI service may evaluate several isolated participants. See [[01 - Architecture/Execution/Execution Modes]], [[01 - Architecture/Portfolio Accounting/Capital Allocation]] and [[03 - Experiments/Autonomous Experiments]].
+Extension baseline: 2026-09-14. A trading agent is an independently configured participant, not an LLM instance. Phase 4 implements pure agent-attributed strategy decisions and immutable proposal intent. The Phase 5 candidate adds allocation ownership, risk decisions and reservations without execution. One deterministic participant may use no AI; one future AI service may evaluate several isolated participants. See [[01 - Architecture/Execution/Execution Modes]], [[01 - Architecture/Portfolio Accounting/Capital Allocation]] and [[03 - Experiments/Autonomous Experiments]].
 
 ## Identity and isolation
 

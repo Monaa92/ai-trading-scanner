@@ -1,6 +1,6 @@
 # Configuration and version manifests
 
-Status: Phase 1 startup configuration and Phase 2 per-dataset provenance/availability configuration are IMPLEMENTED; strategy, risk, full run-data, costs, broker and experiment manifests remain specifications. Configuration is data and remains separately versioned from code.
+Status: Phase 1 startup configuration, Phase 2 dataset configuration, Phase 4 strategy configuration and the Phase 5 content-identified research risk policy are IMPLEMENTED. Full run-data, sourced cost, broker and experiment manifests remain specifications. Configuration is data and remains separately versioned from code.
 
 | Namespace | Required contents | Classification |
 | --- | --- | --- |
