@@ -1,6 +1,6 @@
 # AI Trading Scanner
 
-Architecture baseline: 2026-09-14. Phases 1–3 provide the merged executable offline configuration, historical-data and deterministic-indicator foundations. A Phase 4 strategy/proposal review candidate is implemented without order or account authority. Purpose: test whether strategies work, not prove that they work. No accepted strategy or performance evidence exists yet.
+Architecture baseline: 2026-09-14. Phases 1–4 provide the merged executable offline configuration, historical-data, deterministic-indicator and strategy/proposal foundations. Phase 4 was independently reviewed and merged without order or account authority. Purpose: test whether strategies work, not prove that they work. No accepted strategy or performance evidence exists yet.
 
 Read [PROJECT_RULES](../../PROJECT_RULES.md) first. This folder is the Obsidian vault. Notes use the numbered project hierarchy; valid local Obsidian settings are preserved.
 
@@ -31,4 +31,4 @@ The vault folder was renamed in place to `AI-Trading-Scanner`; all 79 pre-rename
 
 ## Executable foundation
 
-Phase 1 implements Python 3.13.15 packaging, validated opaque IDs, independent execution dimensions, fail-closed configuration and local health reporting. Phase 2 adds canonical OHLCV data, XNYS calendar/provenance/quality semantics and causal reads. Phase 3 adds deterministic EMA, RSI, ATR and VWAP. The Phase 4 candidate adds four versioned research baselines and immutable decisions/proposals over those inputs. Startup still rejects LIVE, ORDER_ENABLED and experiment execution. PAPER + FULL_AUTO remains representable while paper order submission remains disabled. See [[01 - Architecture/Market Data]], [[02 - Agents & Strategies/Experiment 1 Strategy Profiles]], [[02 - Agents & Strategies/Shared Agent Rules/Indicators]], [[07 - Operations/Setup]], [[07 - Operations/Configuration]] and [[06 - Testing/Test Strategy]].
+Phase 1 implements Python 3.13.15 packaging, validated opaque IDs, independent execution dimensions, fail-closed configuration and local health reporting. Phase 2 adds canonical OHLCV data, XNYS calendar/provenance/quality semantics and causal reads. Phase 3 adds deterministic EMA, RSI, ATR and VWAP. Phase 4 adds four versioned research baselines and immutable decisions/proposals over those inputs. Startup still rejects LIVE, ORDER_ENABLED and experiment execution. PAPER + FULL_AUTO remains representable while paper order submission remains disabled. See [[01 - Architecture/Market Data]], [[02 - Agents & Strategies/Experiment 1 Strategy Profiles]], [[02 - Agents & Strategies/Shared Agent Rules/Indicators]], [[07 - Operations/Setup]], [[07 - Operations/Configuration]] and [[06 - Testing/Test Strategy]].

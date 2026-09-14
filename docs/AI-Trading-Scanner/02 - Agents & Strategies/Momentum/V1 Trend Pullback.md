@@ -1,6 +1,6 @@
 # V1 trend pullback
 
-Status: implemented research baseline `BASELINE_RESEARCH_V1` / `0.1.0` on the Phase 4 review branch; EXPERIMENTAL and not validated. The registered implementation uses p=5, b=0.25 ATR, k=20, one completed-bar confirmation, RSI 50–80, minimum expected net return 0.001 and maximum input age 60 seconds. These are development defaults requiring empirical calibration, not optimized settings. See [[02 - Agents & Strategies/Shared Agent Rules/Indicators]] and [[01 - Architecture/Portfolio Accounting/Position Sizing]].
+Status: implemented research baseline `BASELINE_RESEARCH_V1` / `0.1.0` on `main`; EXPERIMENTAL and not validated. The registered implementation uses p=5, b=0.25 ATR, k=20, one completed-bar confirmation, RSI 50–80, minimum expected net return 0.001 and maximum input age 60 seconds. These are development defaults requiring empirical calibration, not optimized settings. See [[02 - Agents & Strategies/Shared Agent Rules/Indicators]] and [[01 - Architecture/Portfolio Accounting/Position Sizing]].
 
 ## A. Mandatory deterministic strategy conditions
 

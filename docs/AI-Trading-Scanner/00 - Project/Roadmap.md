@@ -1,6 +1,6 @@
 # Gated roadmap
 
-Phases 1, 2 and 3 are complete. The Phase 4 strategy/proposal candidate is implemented on `review/phase-4-strategy-proposals` and requires independent review before merge. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
+Phases 1, 2, 3 and 4 are complete on `main`. Phase 4 was independently reviewed by `Dekkerszz`, approved with review status PASS, and merged through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`). A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
 
 | Phase | Deliverable | Exit criterion |
 | --- | --- | --- |
@@ -8,7 +8,7 @@ Phases 1, 2 and 3 are complete. The Phase 4 strategy/proposal candidate is imple
 | 1 | Offline Python/FastAPI foundation | Verified/pinned runtime, package/lock/test layout, typed config/identity/data-run/environment/submission/approval validation and minimal health boundary; LIVE disabled and no execution |
 | 2 | Historical data/calendar/quality — IMPLEMENTED | Immutable canonical records, provenance, available-at semantics, XNYS sessions, quality findings, deterministic dataset identity and audited synthetic fixtures. Provider ingestion, persisted revisions and real datasets remain later work. |
 | 3 | Deterministic indicators — COMPLETE | Exact formulas, seeds/session/gaps, warning lineage, prefix invariance and batch/incremental fixtures pass; independently reviewed, approved and merged in PR #2 (`0cf0497`) |
-| 4 | Strategy and proposal contracts — REVIEW CANDIDATE | Registered unoptimized `BASELINE_RESEARCH_V1` parameters, four independent profiles, first-class NO_TRADE, model/profile independence, agent-scoped pure evaluations and deterministic proposal/management identities; no order submission. Independent review remains required. |
+| 4 | Strategy and proposal contracts — COMPLETE | Registered unoptimized `BASELINE_RESEARCH_V1` parameters, four independent profiles, first-class NO_TRADE, model/profile independence, agent-scoped pure evaluations and deterministic proposal/management identities; no order submission. Independently reviewed and merged through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`). |
 | 5 | Risk/allocation/safety | Decimal sizing, parent+agent atomic reservations, scoped locks and ownership/approval contract tests independently reviewed |
 | 6 | Backtesting/simulation | Causal SimulationBroker lifecycle, isolated participants, versioned round-trip costs, fixed management, decision/approval replay where valid, audit and core metrics pass |
 | 7 | Historical validation | Registered comparable evidence, rejection/counterfactual separation and failed experiments retained |
@@ -29,4 +29,4 @@ Phases 1, 2 and 3 are complete. The Phase 4 strategy/proposal candidate is imple
 
 Autonomous paper experiments are controlled research after historical/paper validation. They do not advance operational live autonomy. The four profile names are hypotheses, not permission to invent missing parameters or activate unvalidated management. A deterministic-only program can skip AI phases, documenting that choice, then validate manual operation. Core accounting/audit/statistics begin before research, not postponed to Phase 10.
 
-Exact next action: **independent competent review of the Phase 4 candidate**, focused on strategy predicates, causal/quality behavior, baseline parameters, cost handling and approval-sensitive proposal identity. If approved and merged without material change, Phase 5 is risk, allocation and safety contracts.
+Exact next action: **Phase 5 risk, allocation and safety contracts**, extending the approved proposal boundary with Decimal sizing, parent-and-agent atomic reservations, scoped locks and ownership/approval contract tests. This does not authorize order submission, broker integration, PAPER or LIVE operation.

@@ -1,6 +1,6 @@
 # Backend architecture
 
-Status: mostly design specification. Phases 1–3 implement the offline configuration, historical-data and deterministic-indicator foundations. The Phase 4 review candidate implements the pure Strategy boundary and immutable decision/proposal contracts in `strategies`; risk, portfolio, execution, broker and persistence boundaries remain specifications. Parent: [[01 - Architecture/System Architecture]].
+Status: mostly design specification. Phases 1–4 implement the offline configuration, historical-data, deterministic-indicator and pure Strategy/proposal foundations. Phase 4 implements the pure Strategy boundary and immutable decision/proposal contracts in `strategies`; risk, portfolio, execution, broker and persistence boundaries remain specifications. Parent: [[01 - Architecture/System Architecture]].
 
 ## Ownership and dependency direction
 

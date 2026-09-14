@@ -13,8 +13,8 @@ Append-only research history. See [[02 - Agents & Strategies/Strategy Versioning
 | Evaluation period / dataset version | NOT RUN / no market dataset; deterministic synthetic branch fixtures only |
 | Execution/cost/risk model | Externally supplied test-only normalized round-trip estimate; no broker cost engine, Risk Engine or execution model |
 | Previous / new metrics / delta | Unavailable / unavailable / not applicable |
-| Result / decision | Contract behavior locally verified / EXPERIMENTAL; independent review pending |
-| Relevant commit / PR | Exact review candidate commit is recorded in the final handoff after creation; no PR created or asserted here |
+| Result / decision | Contract behavior independently reviewed, APPROVED/PASS and merged; EXPERIMENTAL research baseline only |
+| Relevant commit / PR | Candidate `2a52ffdfa4cd0bd9379adb92996fc9764ffaed63`; reviewed by `Dekkerszz`; PR #3 merged/closed at `60d83842f6bb686f2a407db82781d28ff534b355`; remote review branch deleted |
 | Notes | Defaults are uncalibrated, not optimized against fixtures and do not authorize trading |
 
 ## 2026-09-13 — v0.1.0 specification baseline

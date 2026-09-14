@@ -1,6 +1,17 @@
 # Phase 4 independent review
 
-Status: **INDEPENDENT COMPETENT HUMAN REVIEW REQUIRED; no approval is recorded.** Review the exact candidate commit on `review/phase-4-strategy-proposals`. Do not merge until critical findings are resolved and that exact commit is approved.
+Status: **APPROVED, PASSED AND MERGED.** The independently reviewed candidate is now on `main`; this record preserves the required review evidence. It does not authorize trading, broker connection, provider ingestion or execution.
+
+| Review evidence | Recorded value |
+| --- | --- |
+| Reviewer | `Dekkerszz` |
+| Candidate commit | `2a52ffdfa4cd0bd9379adb92996fc9764ffaed63` |
+| GitHub review outcome | APPROVED |
+| Review status | PASS |
+| Pull request | #3 |
+| Merge commit | `60d83842f6bb686f2a407db82781d28ff534b355` |
+| Pull-request state | Merged and closed |
+| Remote review branch | `review/phase-4-strategy-proposals` deleted after merge |
 
 | Area | Implementation | Behavioral evidence | Intended invariant | Failure impact |
 | --- | --- | --- | --- | --- |
@@ -20,8 +31,8 @@ Status: **INDEPENDENT COMPETENT HUMAN REVIEW REQUIRED; no approval is recorded.*
 | Agent fairness | context/snapshot | four-agent equality tests | Same canonical raw/derived information, isolated attribution | Invalid comparison |
 | Side effects and failure paths | evaluator module | I/O/fatal/mismatch tests and coupling scan | No network, broker, AI, account mutation or order action | Phase boundary bypass |
 
-Reviewer should recompute representative fixtures, challenge threshold equalities and stop/target geometry, mutate every approval-sensitive field, inspect content canonicalization, and confirm no future layer is impersonated. Record reviewer, exact commit, outcome, PR and merge evidence only when they exist. Agent self-review is insufficient.
+The review scope required representative-fixture recomputation, threshold and stop/target-geometry challenges, approval-sensitive field mutation, content-canonicalization inspection, and confirmation that no future layer was impersonated. The evidence above records the reviewer, exact commit, outcome, PR and merge. Agent self-review was not used as approval.
 
 ## Candidate verification
 
-Recorded before candidate commit on 2026-09-14: 303 total tests passed, including 111 original Phase 1 cases, 60 Phase 2 cases, 48 Phase 3 cases and 84 focused Phase 4 cases. Ruff lint/format, strict mypy, lock validation, sdist/wheel build, source-tree health and fresh isolated offline wheel-install health passed. Repository-wide secret, forbidden-coupling, whitespace, ADR-field and Markdown/Obsidian-link checks passed. The sole pytest warning is the existing upstream Starlette `BlockingPortal` deprecation. No market experiment, profitability test or independent review is implied.
+Recorded for the candidate on 2026-09-14: 303 total tests passed, including 111 original Phase 1 cases, 60 Phase 2 cases, 48 Phase 3 cases and 84 focused Phase 4 cases. Ruff lint/format, strict mypy, lock validation, sdist/wheel build, source-tree health and fresh isolated offline wheel-install health passed. Repository-wide secret, forbidden-coupling, whitespace, ADR-field and Markdown/Obsidian-link checks passed. The sole pytest warning is the existing upstream Starlette `BlockingPortal` deprecation. No market experiment or profitability evidence is implied.

@@ -1,10 +1,10 @@
 # Phase 4 completion criteria
 
-Status: **IMPLEMENTED AND LOCALLY VERIFIED; INDEPENDENT REVIEW REQUIRED.**
+Status: **COMPLETE — independently reviewed, approved and merged to `main` through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`).**
 
 Phase 4 is complete only when the exact candidate satisfies this invariant: given identical causal market/indicator inputs, strategy configuration and agent-scoped context, evaluation deterministically returns an auditable `NO_TRADE` or complete immutable trade proposal without future information, I/O, account mutation or order placement.
 
-| Criterion | Candidate evidence |
+| Criterion | Merged implementation evidence |
 | --- | --- |
 | Four explicit strategy identities | Registered Momentum, Mean Reversion, Breakout and Multi-Factor configuration types and IDs |
 | Strategy/model separation | No model field or AI import in configuration/evaluation; `StrategyId` and `ModelId` remain separate |
@@ -19,4 +19,4 @@ Phase 4 is complete only when the exact candidate satisfies this invariant: give
 
 The baselines are `BASELINE_RESEARCH_V1` / `0.1.0`, EXPERIMENTAL and uncalibrated. Passing these tests proves contract behavior, not profitability or readiness to trade. See [[02 - Agents & Strategies/Experiment 1 Strategy Profiles]] and [[06 - Testing/Phase 4 Independent Review]].
 
-Candidate verification on 2026-09-14: 303 total tests passed, comprising 219 Phase 1–3 regressions and 84 focused Phase 4 cases. Ruff lint/format, strict mypy, lock validation, package build, source and isolated installed-package health, scope/security scans, whitespace, ADR fields and documentation links passed. The only test warning is an upstream Starlette `BlockingPortal` deprecation.
+Candidate verification on 2026-09-14: 303 total tests passed, comprising 219 Phase 1–3 regressions and 84 focused Phase 4 cases. Ruff lint/format, strict mypy, lock validation, package build, source and isolated installed-package health, scope/security scans, whitespace, ADR fields and documentation links passed. The only test warning is an upstream Starlette `BlockingPortal` deprecation. The reviewed candidate was `2a52ffdfa4cd0bd9379adb92996fc9764ffaed63`; review evidence and the merge record are in [[06 - Testing/Phase 4 Independent Review]].

@@ -1,6 +1,6 @@
 # Experiment 1 strategy profiles
 
-Status: **IMPLEMENTED RESEARCH BASELINES ON PHASE 4 REVIEW BRANCH; NOT VALIDATED**. These profiles extend [[02 - Agents & Strategies/Strategy Overview]]. Agent A preserves the registered V1 trend-pullback semantics; all four use explicit `BASELINE_RESEARCH_V1` configuration version `0.1.0` and require empirical calibration.
+Status: **IMPLEMENTED RESEARCH BASELINES ON `main`; NOT VALIDATED**. These profiles extend [[02 - Agents & Strategies/Strategy Overview]]. Agent A preserves the registered V1 trend-pullback semantics; all four use explicit `BASELINE_RESEARCH_V1` configuration version `0.1.0` and require empirical calibration.
 
 Experiment 1 compares strategy quality under information parity. Four stable participant identities receive the same immutable US-equity universe, normalized snapshot hash/timestamps, news/information availability, starting-capital profile, hard risk policy, transaction costs and execution assumptions. They may reach different decisions. No strategy is bound to an AI provider or model; `strategy_profile_id` and `model_config_id` are independent manifest fields.
 

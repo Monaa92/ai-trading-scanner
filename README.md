@@ -2,9 +2,9 @@
 
 Private research project investigating a systematic AI-assisted intraday scanner through deterministic rules, risk controls, realistic backtesting and eventual paper validation. Profitability is unproven; negative results are retained.
 
-Current state: Phases 1–3 are complete on `main`. The Phase 4 review candidate adds four explicit
-research-baseline strategy profiles, pure causal evaluation, first-class `NO_TRADE`, and immutable
-content-identified trade-proposal contracts. It remains unreviewed and unvalidated for trading. No
+Current state: Phases 1–4 are complete on `main`. Phase 4 adds four explicit research-baseline
+strategy profiles, pure causal evaluation, first-class `NO_TRADE`, and immutable content-identified
+trade-proposal contracts. These research baselines remain unvalidated for trading. No
 scanner, central risk engine, portfolio, broker, AI, order submission or execution exists.
 
 - [Project rules](docs/PROJECT_RULES.md) — authoritative governance.
