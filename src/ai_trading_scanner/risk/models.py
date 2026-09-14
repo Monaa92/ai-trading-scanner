@@ -32,6 +32,7 @@ from ai_trading_scanner.domain.execution import (
     ExecutionDimensions,
     ExecutionEnvironment,
 )
+from ai_trading_scanner.strategies import SizingMethod, TradeProposal
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -252,6 +253,11 @@ class SafetyLockReason(StrEnum):
     RECONCILIATION_LOCK = "RECONCILIATION_LOCK"
 
 
+class LossStateScope(StrEnum):
+    PARENT_ACCOUNT = "PARENT_ACCOUNT"
+    AGENT_ALLOCATION = "AGENT_ALLOCATION"
+
+
 class SafetyLock(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -322,12 +328,33 @@ class LossStateSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     loss_state_id: LossStateId
-    schema_version: Literal["loss-state-v1"] = "loss-state-v1"
+    schema_version: Literal["loss-state-v2"] = "loss-state-v2"
+    scope: LossStateScope
+    account_id: AccountId
+    allocation_id: AllocationId | None = None
+    agent_id: AgentId | None = None
+    session_id: str = Field(min_length=1)
+    session_start_at: datetime
+    session_end_at: datetime
+    observed_at: datetime
+    effective_at: datetime
+    valid_until: datetime
     eligible_current_equity: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
     session_start_equity: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     current_loss: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
     loss_breached: bool = False
     revision: Annotated[int, Field(ge=0)] = 0
+
+    @field_validator(
+        "session_start_at",
+        "session_end_at",
+        "observed_at",
+        "effective_at",
+        "valid_until",
+    )
+    @classmethod
+    def normalize_times(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -345,6 +372,19 @@ class LossStateSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def validate_loss_state(self) -> Self:
+        if self.scope is LossStateScope.PARENT_ACCOUNT:
+            if self.allocation_id is not None or self.agent_id is not None:
+                raise ValueError("parent loss state cannot carry allocation or agent identity")
+        elif self.allocation_id is None or self.agent_id is None:
+            raise ValueError("agent-allocation loss state requires allocation and agent identity")
+        if not (
+            self.session_start_at
+            <= self.effective_at
+            <= self.observed_at
+            < self.valid_until
+            <= self.session_end_at
+        ):
+            raise ValueError("loss-state timestamps violate causal or freshness ordering")
         with localcontext(_DECIMAL_CONTEXT):
             expected_loss = max(
                 Decimal(0), self.session_start_equity - self.eligible_current_equity
@@ -364,14 +404,34 @@ def calculate_loss_state_id(
 
 def create_loss_state(
     *,
+    scope: LossStateScope,
+    account_id: AccountId,
+    session_id: str,
+    session_start_at: datetime,
+    session_end_at: datetime,
+    observed_at: datetime,
+    effective_at: datetime,
+    valid_until: datetime,
     eligible_current_equity: Decimal,
     session_start_equity: Decimal,
     current_loss: Decimal,
+    allocation_id: AllocationId | None = None,
+    agent_id: AgentId | None = None,
     loss_breached: bool = False,
     revision: int = 0,
 ) -> LossStateSnapshot:
     content: dict[str, object] = {
-        "schema_version": "loss-state-v1",
+        "schema_version": "loss-state-v2",
+        "scope": scope,
+        "account_id": account_id,
+        "allocation_id": allocation_id,
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "session_start_at": _aware_utc(session_start_at),
+        "session_end_at": _aware_utc(session_end_at),
+        "observed_at": _aware_utc(observed_at),
+        "effective_at": _aware_utc(effective_at),
+        "valid_until": _aware_utc(valid_until),
         "eligible_current_equity": eligible_current_equity,
         "session_start_equity": session_start_equity,
         "current_loss": current_loss,
@@ -390,7 +450,7 @@ class SafetyStateSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     safety_state_id: SafetyStateId
-    schema_version: Literal["safety-state-v1"] = "safety-state-v1"
+    schema_version: Literal["safety-state-v2"] = "safety-state-v2"
     agent_loss_state: LossStateSnapshot
     parent_loss_state: LossStateSnapshot
     agent_outstanding_downside: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
@@ -434,7 +494,7 @@ def create_safety_state(
     active_locks: tuple[SafetyLock, ...] = (),
 ) -> SafetyStateSnapshot:
     content: dict[str, object] = {
-        "schema_version": "safety-state-v1",
+        "schema_version": "safety-state-v2",
         "agent_loss_state": agent_loss_state,
         "parent_loss_state": parent_loss_state,
         "agent_outstanding_downside": agent_outstanding_downside,
@@ -458,6 +518,26 @@ class RiskEvaluationState(BaseModel):
     def validate_ownership(self) -> Self:
         if self.allocation.account_id != self.parent.account_id:
             raise ValueError("allocation does not belong to parent account")
+        parent_loss = self.safety.parent_loss_state
+        agent_loss = self.safety.agent_loss_state
+        if (
+            parent_loss.scope is not LossStateScope.PARENT_ACCOUNT
+            or parent_loss.account_id != self.parent.account_id
+        ):
+            raise ValueError("parent loss state attribution does not match parent account")
+        if (
+            agent_loss.scope is not LossStateScope.AGENT_ALLOCATION
+            or agent_loss.account_id != self.parent.account_id
+            or agent_loss.allocation_id != self.allocation.allocation_id
+            or agent_loss.agent_id != self.allocation.agent_id
+        ):
+            raise ValueError("agent loss state attribution does not match allocation owner")
+        if (
+            agent_loss.session_id != parent_loss.session_id
+            or agent_loss.session_start_at != parent_loss.session_start_at
+            or agent_loss.session_end_at != parent_loss.session_end_at
+        ):
+            raise ValueError("agent and parent loss states must share one session boundary")
         for lock in self.safety.active_locks:
             if lock.account_id != self.parent.account_id:
                 raise ValueError("safety lock belongs to a different parent account")
@@ -477,9 +557,11 @@ class SizingDecision(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     sizing_decision_id: SizingDecisionId
-    schema_version: Literal["sizing-decision-v2"] = "sizing-decision-v2"
+    schema_version: Literal["sizing-decision-v3"] = "sizing-decision-v3"
     proposal_id: TradeProposalId
     risk_configuration_id: RiskConfigurationId
+    source_proposal: TradeProposal
+    source_risk_configuration: RiskConfiguration
     account_id: AccountId
     allocation_id: AllocationId
     agent_id: AgentId
@@ -520,6 +602,28 @@ class SizingDecision(BaseModel):
 
     @model_validator(mode="after")
     def validate_sizing(self) -> Self:
+        proposal = self.source_proposal
+        configuration = self.source_risk_configuration
+        if proposal.proposal_id != self.proposal_id:
+            raise ValueError("sizing source proposal does not match proposal identity")
+        if configuration.risk_configuration_id != self.risk_configuration_id:
+            raise ValueError("sizing source configuration does not match configuration identity")
+        if proposal.agent_id != self.agent_id:
+            raise ValueError("sizing source proposal does not match agent attribution")
+        if (
+            self.entry_price != proposal.entry.reference_price
+            or self.stop_price != proposal.stop_level
+            or self.currency != proposal.entry.currency
+            or self.round_trip_cost_return != proposal.economics.cost_estimate.total_return_drag
+        ):
+            raise ValueError("sizing values do not match immutable proposal content")
+        if self.quantity_increment != configuration.quantity_increment:
+            raise ValueError("sizing increment does not match immutable risk configuration")
+        if (
+            proposal.sizing.method is SizingMethod.FINAL_QUANTITY
+            and self.quantity != proposal.sizing.final_quantity
+        ):
+            raise ValueError("sizing quantity does not match immutable final-quantity intent")
         with localcontext(_DECIMAL_CONTEXT):
             if self.quantity % self.quantity_increment != 0:
                 raise ValueError("quantity must align to quantity increment")
@@ -586,6 +690,9 @@ class RiskRejectionCode(StrEnum):
     DUPLICATE_TERMINAL_RESERVATION = "DUPLICATE_TERMINAL_RESERVATION"
     PRELIMINARY_DECISION_MISMATCH = "PRELIMINARY_DECISION_MISMATCH"
     SUBMISSION_NOT_ENABLED = "SUBMISSION_NOT_ENABLED"
+    SAFETY_STATE_MISMATCH = "SAFETY_STATE_MISMATCH"
+    FUTURE_SAFETY_STATE = "FUTURE_SAFETY_STATE"
+    STALE_SAFETY_STATE = "STALE_SAFETY_STATE"
 
 
 class RiskEvaluatedLimits(BaseModel):
@@ -625,7 +732,7 @@ class RiskDecision(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     risk_decision_id: RiskDecisionId
-    schema_version: Literal["risk-decision-v2"] = "risk-decision-v2"
+    schema_version: Literal["risk-decision-v3"] = "risk-decision-v3"
     status: RiskDecisionStatus
     reason_codes: tuple[RiskRejectionCode, ...]
     proposal_id: TradeProposalId
@@ -694,6 +801,39 @@ class RiskDecision(BaseModel):
             )
         ):
             raise ValueError("sizing exceeds bound remaining loss headroom")
+        if self.sizing_decision is not None:
+            configuration = self.sizing_decision.source_risk_configuration
+            with localcontext(_DECIMAL_CONTEXT):
+                expected_agent_ceiling = configuration.max_agent_drawdown_fraction * min(
+                    safety.agent_loss_state.session_start_equity,
+                    safety.agent_loss_state.eligible_current_equity,
+                )
+                expected_parent_ceiling = configuration.max_parent_drawdown_fraction * min(
+                    safety.parent_loss_state.session_start_equity,
+                    safety.parent_loss_state.eligible_current_equity,
+                )
+                expected_allowed_risk = (
+                    safety.agent_loss_state.eligible_current_equity
+                    * configuration.max_risk_fraction
+                )
+                if configuration.max_monetary_risk is not None:
+                    expected_allowed_risk = min(
+                        expected_allowed_risk, configuration.max_monetary_risk
+                    )
+                expected_allowed_risk = min(
+                    expected_allowed_risk,
+                    limits.agent_remaining_loss_headroom,
+                    limits.parent_remaining_loss_headroom,
+                )
+            if (
+                limits.agent_daily_loss_ceiling != expected_agent_ceiling
+                or limits.parent_daily_loss_ceiling != expected_parent_ceiling
+            ):
+                raise ValueError(
+                    "evaluated loss ceilings do not match immutable risk configuration"
+                )
+            if self.sizing_decision.allowed_risk_amount != expected_allowed_risk:
+                raise ValueError("allowed risk does not match immutable inputs")
         if self.risk_decision_id != calculate_risk_decision_id(self):
             raise ValueError("risk decision identity does not match content")
         return self

@@ -205,6 +205,23 @@ class RiskEngine:
             seconds=configuration.max_proposal_age_seconds
         ):
             reasons.add(RiskRejectionCode.STALE_PROPOSAL)
+        loss_states = (
+            state.safety.agent_loss_state,
+            state.safety.parent_loss_state,
+        )
+        if any(
+            proposal.as_of < loss_state.session_start_at
+            or proposal.as_of >= loss_state.session_end_at
+            for loss_state in loss_states
+        ):
+            reasons.add(RiskRejectionCode.SAFETY_STATE_MISMATCH)
+        if any(
+            loss_state.effective_at > evaluated_at or loss_state.observed_at > evaluated_at
+            for loss_state in loss_states
+        ):
+            reasons.add(RiskRejectionCode.FUTURE_SAFETY_STATE)
+        if any(evaluated_at >= loss_state.valid_until for loss_state in loss_states):
+            reasons.add(RiskRejectionCode.STALE_SAFETY_STATE)
         if state.safety.active_locks:
             if any(
                 lock.reason is SafetyLockReason.DRAWDOWN_LOCK for lock in state.safety.active_locks
@@ -323,9 +340,11 @@ class RiskEngine:
             modeled_risk = quantity * unit_modeled_loss
             reservation_amount = quantity * cash_per_unit
             content: dict[str, object] = {
-                "schema_version": "sizing-decision-v2",
+                "schema_version": "sizing-decision-v3",
                 "proposal_id": proposal.proposal_id,
                 "risk_configuration_id": configuration.risk_configuration_id,
+                "source_proposal": proposal,
+                "source_risk_configuration": configuration,
                 "account_id": parent.account_id,
                 "allocation_id": allocation.allocation_id,
                 "agent_id": allocation.agent_id,
@@ -411,7 +430,7 @@ class RiskEngine:
             parent_remaining_loss_headroom=_loss_capacity(configuration, state)[3],
         )
         content: dict[str, object] = {
-            "schema_version": "risk-decision-v2",
+            "schema_version": "risk-decision-v3",
             "status": status,
             "reason_codes": reasons,
             "proposal_id": proposal.proposal_id,

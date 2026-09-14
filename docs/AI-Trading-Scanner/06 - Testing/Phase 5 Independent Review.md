@@ -1,6 +1,6 @@
 # Phase 5 independent review
 
-Status: **CHANGES REQUIRED ON ORIGINAL CANDIDATE; REPLACEMENT RE-REVIEW REQUIRED.** PR #4 reviewed candidate `0c36a5de657e749daa0ef987c47c44d299dd67b7` and returned CHANGES REQUIRED. No approval is recorded. Review the exact replacement commit; do not merge until every finding is resolved and that replacement is independently approved.
+Status: **CHANGES REQUIRED ON TWO CANDIDATES; SECOND REMEDIATION RE-REVIEW REQUIRED.** PR #4 reviewed candidate `0c36a5de657e749daa0ef987c47c44d299dd67b7` and returned CHANGES REQUIRED. Independent re-review of candidate `7ea3dc007e212d9f391bb6cc4e9b36139d005322` also returned CHANGES REQUIRED. No approval is recorded. Review the exact second-remediation PR head identified in the review handoff; do not merge until every finding is resolved and that exact head is independently approved.
 
 | Area | Implementation | Behavioral evidence | Intended invariant | Failure impact |
 | --- | --- | --- | --- | --- |
@@ -29,6 +29,12 @@ The reviewer should independently recompute representative quantities and identi
 
 The original review found seven issues: daily-loss headroom was not a sizing bound; one proposal could reserve through multiple allocations; active expired replay and post-expiry consume were unsafe; sizing arithmetic could contradict its fields; the cross-parent safety-lock dictionary was unsynchronized; evaluated limits admitted floats and risk decisions omitted safety identity; and review documentation was stale. The replacement implements explicit content-identified loss evidence and remaining-headroom arithmetic, coordinator-wide proposal uniqueness, expiry-safe replay/consume, self-validating sizing arithmetic, parent-partitioned mutable collections, complete safety evidence in `RiskDecision`, and this updated handoff. Adversarial tests in `test_risk_review_remediation.py` exercise each failure path. These changes are candidate evidence, not an approval.
 
+## First replacement re-review and second remediation
+
+The independent re-review found three remaining issues in `7ea3dc0`: agent limits could fragment across simultaneous allocations sharing one `AgentId`; coherent sizing/risk forgeries could retain false proposal/configuration attribution; and loss evidence did not identify its scope, session or causal freshness. The second remediation chooses the already specified V1 rule of exactly one registered allocation per agent within a coordinator context. Registration is serialized by the registry lock; reservation lifecycle does not deregister that allocation. The reservation lock order remains proposal guard → parent → allocation, so no new agent lock or parallel agent ledger exists.
+
+Sizing evidence now embeds self-validating immutable `TradeProposal` and `RiskConfiguration` objects and checks entry, stop, currency, costs, sizing intent, quantity increment, configured ceilings and allowed-risk derivation. Loss evidence now binds parent or agent-allocation scope, account/allocation/agent identity, session identity/boundaries, observation/effective/valid-until time and revision. Registration, update, evaluation and final reservation reject misattribution, previous/stale/future evidence, timestamp or revision regression and changed same-session boundaries. `test_risk_second_remediation.py` contains the adversarial evidence. This remains a candidate description, not approval.
+
 ## Candidate verification
 
-Before commit, record exact test splits, lint/type/build/health, isolated installation, security/scope scans, documentation links and whitespace results. The review handoff must identify the exact replacement remote commit. PR #4 exists, but no approval or merge evidence currently exists.
+Before commit, record exact test splits, lint/type/build/health, isolated installation, security/scope scans, documentation links and whitespace results. The review handoff must identify the exact second-remediation remote commit. PR #4 exists, but no approval or merge evidence currently exists.

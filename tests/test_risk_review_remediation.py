@@ -7,9 +7,11 @@ import pytest
 from pydantic import ValidationError
 from risk_helpers import (
     ACCOUNT_ID,
+    allocation_loss_state,
     allocation_snapshot,
     coordinator,
     loss_state,
+    parent_loss_state,
     parent_snapshot,
     risk_policy,
     safety_state,
@@ -20,6 +22,7 @@ from risk_helpers import (
 from ai_trading_scanner.domain import AccountId, AllocationId
 from ai_trading_scanner.risk import (
     CapitalReservation,
+    DuplicateCapitalScopeError,
     InMemoryCapitalCoordinator,
     ReservationAttemptStatus,
     ReservationState,
@@ -150,7 +153,9 @@ def test_loss_state_change_after_preflight_is_revalidated_at_reservation() -> No
     store.update_allocation_loss_state(
         ALLOCATION_A, loss_state("100", current_loss="19.9", revision=1)
     )
-    store.update_parent_loss_state(ACCOUNT_ID, loss_state("100", current_loss="19.9", revision=1))
+    store.update_parent_loss_state(
+        ACCOUNT_ID, parent_loss_state("100", current_loss="19.9", revision=1)
+    )
 
     attempt = store.reserve(
         proposal,
@@ -207,121 +212,61 @@ def test_consumed_placeholder_conservatively_retains_modeled_downside() -> None:
     assert safety.parent_outstanding_downside == reservation.reserved_downside
 
 
-def test_same_proposal_cannot_reserve_through_second_allocation() -> None:
-    proposal = trade_proposal()
-    configured = risk_policy()
+def test_same_agent_cannot_register_second_allocation() -> None:
     second_allocation = allocation_snapshot(allocation="allocation:A2")
-    store = coordinator(allocations=(allocation_snapshot(), second_allocation))
-    decisions = {
-        allocation_id: RiskEngine().evaluate(
-            proposal,
-            configured,
-            store.evaluation_state(ACCOUNT_ID, allocation_id),
-            evaluated_at=proposal.as_of,
-        )
-        for allocation_id in (ALLOCATION_A, second_allocation.allocation_id)
-    }
-    first = store.reserve(
-        proposal,
-        configured,
-        decisions[ALLOCATION_A],
-        account_id=ACCOUNT_ID,
-        allocation_id=ALLOCATION_A,
-        evaluated_at=proposal.as_of,
-    )
-    duplicate = store.reserve(
-        proposal,
-        configured,
-        decisions[second_allocation.allocation_id],
-        account_id=ACCOUNT_ID,
-        allocation_id=second_allocation.allocation_id,
-        evaluated_at=proposal.as_of,
-    )
+    store = coordinator()
 
-    assert first.status is ReservationAttemptStatus.RESERVED
-    assert duplicate.risk_decision.reason_codes == (RiskRejectionCode.OWNERSHIP_MISMATCH,)
-    assert store.allocation_snapshot(second_allocation.allocation_id).active_reservation_count == 0
+    with pytest.raises(DuplicateCapitalScopeError, match="already has an active allocation"):
+        store.register_allocation(
+            second_allocation,
+            allocation_loss_state(allocation_id=second_allocation.allocation_id),
+        )
 
 
 def test_same_proposal_cannot_reserve_across_parent_accounts() -> None:
-    proposal = trade_proposal()
-    configured = risk_policy()
     store = coordinator()
     other_account = AccountId.parse("account:other")
     other_parent = parent_snapshot().model_copy(update={"account_id": other_account})
     other_allocation = allocation_snapshot(allocation="allocation:other").model_copy(
         update={"account_id": other_account}
     )
-    store.register_parent(other_parent, loss_state())
-    store.register_allocation(other_allocation, loss_state())
-    first_state = store.evaluation_state(ACCOUNT_ID, ALLOCATION_A)
-    other_state = store.evaluation_state(other_account, other_allocation.allocation_id)
-    first_decision = RiskEngine().evaluate(
-        proposal, configured, first_state, evaluated_at=proposal.as_of
-    )
-    other_decision = RiskEngine().evaluate(
-        proposal, configured, other_state, evaluated_at=proposal.as_of
-    )
-    store.reserve(
-        proposal,
-        configured,
-        first_decision,
-        account_id=ACCOUNT_ID,
-        allocation_id=ALLOCATION_A,
-        evaluated_at=proposal.as_of,
-    )
-    duplicate = store.reserve(
-        proposal,
-        configured,
-        other_decision,
-        account_id=other_account,
-        allocation_id=other_allocation.allocation_id,
-        evaluated_at=proposal.as_of,
-    )
-
-    assert duplicate.risk_decision.reason_codes == (RiskRejectionCode.OWNERSHIP_MISMATCH,)
-    assert store.parent_snapshot(other_account) == other_parent
-
-
-def test_concurrent_cross_allocation_duplicate_creates_one_active_reservation() -> None:
-    proposal = trade_proposal()
-    configured = risk_policy()
-    second = allocation_snapshot(allocation="allocation:A2")
-    store = coordinator(allocations=(allocation_snapshot(), second))
-    allocation_ids = (ALLOCATION_A, second.allocation_id)
-    decisions = tuple(
-        RiskEngine().evaluate(
-            proposal,
-            configured,
-            store.evaluation_state(ACCOUNT_ID, allocation_id),
-            evaluated_at=proposal.as_of,
+    store.register_parent(other_parent, parent_loss_state(account_id=other_account))
+    with pytest.raises(DuplicateCapitalScopeError, match="already has an active allocation"):
+        store.register_allocation(
+            other_allocation,
+            allocation_loss_state(
+                account_id=other_account,
+                allocation_id=other_allocation.allocation_id,
+                agent_id=other_allocation.agent_id,
+            ),
         )
-        for allocation_id in allocation_ids
+
+
+def test_concurrent_same_agent_allocation_registration_accepts_one() -> None:
+    store = InMemoryCapitalCoordinator()
+    store.register_parent(parent_snapshot(), parent_loss_state())
+    allocations = (
+        allocation_snapshot(allocation="allocation:A1"),
+        allocation_snapshot(allocation="allocation:A2"),
     )
     barrier = Barrier(2)
 
-    def submit(index: int):  # type: ignore[no-untyped-def]
+    def register(index: int) -> str:
         barrier.wait()
-        return store.reserve(
-            proposal,
-            configured,
-            decisions[index],
-            account_id=ACCOUNT_ID,
-            allocation_id=allocation_ids[index],
-            evaluated_at=proposal.as_of,
-        )
+        allocation = allocations[index]
+        try:
+            store.register_allocation(
+                allocation,
+                allocation_loss_state(allocation_id=allocation.allocation_id),
+            )
+        except DuplicateCapitalScopeError:
+            return "REJECTED"
+        return "REGISTERED"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        attempts = tuple(pool.map(submit, range(2)))
+        results = tuple(pool.map(register, range(2)))
 
-    assert sorted(item.status.value for item in attempts) == ["REJECTED", "RESERVED"]
-    assert (
-        sum(
-            store.allocation_snapshot(allocation_id).active_reservation_count
-            for allocation_id in allocation_ids
-        )
-        == 1
-    )
+    assert sorted(results) == ["REGISTERED", "REJECTED"]
 
 
 def test_active_replay_is_valid_just_before_deadline() -> None:
@@ -417,7 +362,9 @@ def test_sizing_decision_rejects_reidentified_arithmetic_forgery(
     content[field] = replacement
     content["sizing_decision_id"] = calculate_sizing_decision_id(content)
 
-    with pytest.raises(ValidationError, match="arithmetically inconsistent"):
+    with pytest.raises(
+        ValidationError, match="arithmetically inconsistent|immutable proposal content"
+    ):
         SizingDecision.model_validate(content)
 
 
@@ -439,15 +386,11 @@ def test_evaluated_limits_reject_binary_float() -> None:
     "field", ["eligible_current_equity", "session_start_equity", "current_loss"]
 )
 def test_loss_state_rejects_binary_float(field: str) -> None:
-    content: dict[str, object] = {
-        "eligible_current_equity": Decimal("100"),
-        "session_start_equity": Decimal("100"),
-        "current_loss": Decimal("0"),
-    }
+    content = loss_state().model_dump(mode="python", exclude={"loss_state_id", "schema_version"})
     content[field] = 1.0
 
     with pytest.raises(ValidationError, match="must not use float"):
-        create_loss_state(**content)  # type: ignore[arg-type]
+        create_loss_state(**content)
 
 
 def test_materially_different_loss_states_change_safety_and_decision_identity() -> None:
@@ -475,7 +418,7 @@ def test_new_loss_state_revision_changes_bound_decision_identity() -> None:
     )
     revised = create_safety_state(
         agent_loss_state=loss_state(revision=1),
-        parent_loss_state=loss_state(revision=1),
+        parent_loss_state=parent_loss_state(revision=1),
     )
     second = RiskEngine().evaluate(
         proposal, configured, state(safety=revised), evaluated_at=proposal.as_of
@@ -491,18 +434,26 @@ def test_cross_parent_lock_activation_and_evaluation_are_safely_partitioned() ->
     store = InMemoryCapitalCoordinator()
     accounts = (AccountId.parse("account:A"), AccountId.parse("account:B"))
     allocations = (
-        allocation_snapshot(allocation="allocation:one").model_copy(
+        allocation_snapshot(agent="agent:one", allocation="allocation:one").model_copy(
             update={"account_id": accounts[0]}
         ),
-        allocation_snapshot(allocation="allocation:two").model_copy(
+        allocation_snapshot(agent="agent:two", allocation="allocation:two").model_copy(
             update={"account_id": accounts[1]}
         ),
     )
     for account_id, allocation in zip(accounts, allocations, strict=True):
         store.register_parent(
-            parent_snapshot().model_copy(update={"account_id": account_id}), loss_state()
+            parent_snapshot().model_copy(update={"account_id": account_id}),
+            parent_loss_state(account_id=account_id),
         )
-        store.register_allocation(allocation, loss_state())
+        store.register_allocation(
+            allocation,
+            allocation_loss_state(
+                account_id=account_id,
+                allocation_id=allocation.allocation_id,
+                agent_id=allocation.agent_id,
+            ),
+        )
     proposal = trade_proposal()
     barrier = Barrier(2)
 

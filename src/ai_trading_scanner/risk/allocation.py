@@ -21,6 +21,7 @@ from ai_trading_scanner.risk.models import (
     AllocationSnapshot,
     ApprovalBinding,
     CapitalReservation,
+    LossStateScope,
     LossStateSnapshot,
     ParentCapitalSnapshot,
     ReservationAttempt,
@@ -58,6 +59,7 @@ class InMemoryCapitalCoordinator:
         self._proposal_locks: dict[TradeProposalId, RLock] = {}
         self._parents: dict[AccountId, ParentCapitalSnapshot] = {}
         self._allocations: dict[AllocationId, AllocationSnapshot] = {}
+        self._allocation_by_agent: dict[AgentId, AllocationId] = {}
         self._parent_loss_states: dict[AccountId, LossStateSnapshot] = {}
         self._allocation_loss_states: dict[AllocationId, LossStateSnapshot] = {}
         self._parent_locks: dict[AccountId, RLock] = {}
@@ -74,6 +76,7 @@ class InMemoryCapitalCoordinator:
         with self._registry_lock:
             if snapshot.account_id in self._parents:
                 raise DuplicateCapitalScopeError("parent account is already registered")
+            self._validate_parent_loss_state(snapshot.account_id, loss_state)
             self._parents[snapshot.account_id] = snapshot
             self._parent_loss_states[snapshot.account_id] = loss_state
             self._parent_locks[snapshot.account_id] = RLock()
@@ -88,7 +91,13 @@ class InMemoryCapitalCoordinator:
                 raise UnknownCapitalScopeError("parent account is not registered")
             if snapshot.allocation_id in self._allocations:
                 raise DuplicateCapitalScopeError("allocation is already registered")
+            if snapshot.agent_id in self._allocation_by_agent:
+                raise DuplicateCapitalScopeError(
+                    "agent already has an active allocation in this coordinator context"
+                )
+            self._validate_allocation_loss_state(snapshot, loss_state)
             self._allocations[snapshot.allocation_id] = snapshot
+            self._allocation_by_agent[snapshot.agent_id] = snapshot.allocation_id
             self._allocation_loss_states[snapshot.allocation_id] = loss_state
             self._allocation_locks[snapshot.allocation_id] = RLock()
 
@@ -98,8 +107,10 @@ class InMemoryCapitalCoordinator:
         """Replace external parent loss evidence with a strictly newer revision."""
         with self._parent_lock(account_id):
             current = self._parent_loss_state(account_id)
+            self._validate_parent_loss_state(account_id, loss_state)
             if loss_state.revision <= current.revision:
                 raise ReservationTransitionError("parent loss-state revision must increase")
+            self._validate_loss_state_progression(current, loss_state)
             self._parent_loss_states[account_id] = loss_state
 
     def update_allocation_loss_state(
@@ -109,8 +120,10 @@ class InMemoryCapitalCoordinator:
         allocation = self._allocation(allocation_id)
         with self._scope_locks(allocation.account_id, allocation_id):
             current = self._allocation_loss_state(allocation_id)
+            self._validate_allocation_loss_state(allocation, loss_state)
             if loss_state.revision <= current.revision:
                 raise ReservationTransitionError("allocation loss-state revision must increase")
+            self._validate_loss_state_progression(current, loss_state)
             self._allocation_loss_states[allocation_id] = loss_state
 
     def parent_snapshot(self, account_id: AccountId) -> ParentCapitalSnapshot:
@@ -662,6 +675,44 @@ class InMemoryCapitalCoordinator:
             return self._allocation_loss_states[allocation_id]
         except KeyError as error:
             raise UnknownCapitalScopeError("allocation loss state is not registered") from error
+
+    @staticmethod
+    def _validate_parent_loss_state(account_id: AccountId, loss_state: LossStateSnapshot) -> None:
+        if (
+            loss_state.scope is not LossStateScope.PARENT_ACCOUNT
+            or loss_state.account_id != account_id
+            or loss_state.allocation_id is not None
+            or loss_state.agent_id is not None
+        ):
+            raise ReservationTransitionError("parent loss-state attribution mismatch")
+
+    @staticmethod
+    def _validate_allocation_loss_state(
+        allocation: AllocationSnapshot, loss_state: LossStateSnapshot
+    ) -> None:
+        if (
+            loss_state.scope is not LossStateScope.AGENT_ALLOCATION
+            or loss_state.account_id != allocation.account_id
+            or loss_state.allocation_id != allocation.allocation_id
+            or loss_state.agent_id != allocation.agent_id
+        ):
+            raise ReservationTransitionError("allocation loss-state attribution mismatch")
+
+    @staticmethod
+    def _validate_loss_state_progression(
+        current: LossStateSnapshot, replacement: LossStateSnapshot
+    ) -> None:
+        if replacement.observed_at < current.observed_at:
+            raise ReservationTransitionError("loss-state observation time cannot regress")
+        if replacement.effective_at < current.effective_at:
+            raise ReservationTransitionError("loss-state effective time cannot regress")
+        if replacement.session_start_at < current.session_start_at:
+            raise ReservationTransitionError("loss-state session cannot regress")
+        if replacement.session_id == current.session_id and (
+            replacement.session_start_at != current.session_start_at
+            or replacement.session_end_at != current.session_end_at
+        ):
+            raise ReservationTransitionError("same session identity cannot change boundaries")
 
     def _account_safety_locks(self, account_id: AccountId) -> dict[SafetyLockId, SafetyLock]:
         try:
