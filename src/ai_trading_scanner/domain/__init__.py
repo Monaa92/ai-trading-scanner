@@ -18,8 +18,12 @@ from ai_trading_scanner.domain.identities import (
     ExperimentId,
     IndicatorConfigurationId,
     InstrumentId,
+    ManagementMandateId,
     ModelId,
+    StrategyConfigurationId,
+    StrategyDecisionId,
     StrategyId,
+    TradeProposalId,
 )
 
 __all__ = [
@@ -36,8 +40,12 @@ __all__ = [
     "ExperimentType",
     "IndicatorConfigurationId",
     "InstrumentId",
+    "ManagementMandateId",
     "ModelId",
     "OperatingContext",
+    "StrategyConfigurationId",
+    "StrategyDecisionId",
     "StrategyId",
     "SubmissionMode",
+    "TradeProposalId",
 ]

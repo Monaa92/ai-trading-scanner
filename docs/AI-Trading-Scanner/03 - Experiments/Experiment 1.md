@@ -10,4 +10,4 @@ The initial execution tuple is `HISTORICAL_REPLAY + SIMULATION + ORDER_ENABLED +
 
 The run records evaluated setups, TRADE/NO_TRADE decisions, proposals, risk/safety outcomes, simulated orders/fills, portfolio events, execution costs, AI calls/costs and failures. Raw telemetry belongs in structured storage; Obsidian receives reproducible summaries. There is no minimum trade requirement and a no-trade outcome may be economically correct.
 
-Open prerequisites: exact universe, data manifest, strategy parameters, model policy, fee rates, slippage/spread model, experimental period, seeds, failure thresholds and statistical plan. Missing values block start.
+Open prerequisites: exact universe, data manifest, explicit selection of the unvalidated Phase 4 baseline configurations, model policy, fee rates, slippage/spread model, experimental period, seeds, failure thresholds and statistical plan. The existence of `BASELINE_RESEARCH_V1` contracts does not satisfy validation or activate the run; missing values still block start.
