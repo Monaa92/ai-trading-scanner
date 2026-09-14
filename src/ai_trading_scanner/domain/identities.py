@@ -147,6 +147,10 @@ class ReplayEventId(Identifier):
     """Content-derived identity of an ordered replay event envelope."""
 
 
+class ReplayArtifactId(Identifier):
+    """Content-derived identity of one validated immutable replay artifact."""
+
+
 class SimulatedOrderId(Identifier):
     """Content-derived identity of an immutable simulated order intent."""
 

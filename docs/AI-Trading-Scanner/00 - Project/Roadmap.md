@@ -29,4 +29,4 @@ Phases 1–5 are complete on `main`. Phase 6 is **IN PROGRESS** on its feature b
 
 Autonomous paper experiments are controlled research after historical/paper validation. They do not advance operational live autonomy. The four profile names are hypotheses, not permission to invent missing parameters or activate unvalidated management. A deterministic-only program can skip AI phases, documenting that choice, then validate manual operation. Core accounting/audit/statistics begin before research, not postponed to Phase 10.
 
-Exact next action: **continue Phase 6 with the causal scheduler and Phase 2→3 replay increment** under a separately bounded task. Phase 7, external order submission, broker integration, PAPER and LIVE remain unauthorized.
+Exact next action: **independent competent re-review of the remediated Phase 6 foundation**. If approved, continue Phase 6 with the causal scheduler and Phase 2→3 replay increment under a separately bounded task. Phase 7, external order submission, broker integration, PAPER and LIVE remain unauthorized.

@@ -25,7 +25,7 @@ from ai_trading_scanner.domain import (
     StrategyId,
     TradeProposalId,
 )
-from ai_trading_scanner.domain.content_identity import sha256_content_id
+from ai_trading_scanner.domain.content_identity import sha256_content_id_v2
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -44,6 +44,17 @@ def _identity_content(value: BaseModel | dict[str, object], field: str) -> dict[
     if isinstance(value, BaseModel):
         return value.model_dump(mode="python", exclude={field})
     return {key: item for key, item in value.items() if key != field}
+
+
+def _normalized_decimal_content(
+    value: BaseModel | dict[str, object], identity_field: str, fields: tuple[str, ...]
+) -> dict[str, object]:
+    content = _identity_content(value, identity_field)
+    for field in fields:
+        item = content.get(field)
+        if item is not None and not isinstance(item, Decimal | float):
+            content[field] = Decimal(item)  # type: ignore[arg-type]
+    return content
 
 
 class PositionAccountingPolicy(StrEnum):
@@ -164,7 +175,7 @@ def calculate_position_id(
     opened_by_proposal_id: TradeProposalId,
 ) -> PositionId:
     return PositionId.parse(
-        sha256_content_id(
+        sha256_content_id_v2(
             {
                 "run_id": run_id,
                 "account_id": account_id,
@@ -263,9 +274,20 @@ class PortfolioSnapshot(BaseModel):
 def calculate_portfolio_snapshot_id(
     snapshot: PortfolioSnapshot | dict[str, object],
 ) -> PortfolioSnapshotId:
-    return PortfolioSnapshotId.parse(
-        sha256_content_id(_identity_content(snapshot, "portfolio_snapshot_id"))
+    content = _normalized_decimal_content(
+        snapshot,
+        "portfolio_snapshot_id",
+        (
+            "starting_capital",
+            "realized_gross_pnl",
+            "unrealized_gross_pnl",
+            "total_execution_costs",
+            "gross_trading_pnl",
+            "net_trading_pnl",
+            "total_equity",
+        ),
     )
+    return PortfolioSnapshotId.parse(sha256_content_id_v2(content))
 
 
 class PositionChange(BaseModel):
@@ -327,9 +349,12 @@ class PositionChange(BaseModel):
 def calculate_position_change_id(
     change: PositionChange | dict[str, object],
 ) -> PositionChangeId:
-    return PositionChangeId.parse(
-        sha256_content_id(_identity_content(change, "position_change_id"))
+    content = _normalized_decimal_content(
+        change,
+        "position_change_id",
+        ("previous_quantity", "quantity_delta", "new_quantity"),
     )
+    return PositionChangeId.parse(sha256_content_id_v2(content))
 
 
 class RealizedTradeResult(BaseModel):
@@ -386,6 +411,9 @@ class RealizedTradeResult(BaseModel):
 def calculate_realized_trade_result_id(
     result: RealizedTradeResult | dict[str, object],
 ) -> RealizedTradeResultId:
-    return RealizedTradeResultId.parse(
-        sha256_content_id(_identity_content(result, "realized_trade_result_id"))
+    content = _normalized_decimal_content(
+        result,
+        "realized_trade_result_id",
+        ("quantity", "gross_pnl", "total_execution_costs", "net_pnl"),
     )
+    return RealizedTradeResultId.parse(sha256_content_id_v2(content))

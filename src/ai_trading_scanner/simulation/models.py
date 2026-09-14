@@ -21,8 +21,6 @@ from ai_trading_scanner.domain import (
     ManagementMandateId,
     MarketEventId,
     ModelId,
-    PortfolioSnapshotId,
-    RealizedTradeResultId,
     ReplayEventId,
     ReservationId,
     RiskConfigurationId,
@@ -30,7 +28,6 @@ from ai_trading_scanner.domain import (
     SimulatedFillId,
     SimulatedOrderId,
     SimulationExecutionModelId,
-    SimulationResultId,
     SimulationRunId,
     StrategyConfigurationId,
     StrategyDecisionId,
@@ -38,7 +35,7 @@ from ai_trading_scanner.domain import (
     TradeProposalId,
     TransactionCostModelId,
 )
-from ai_trading_scanner.domain.content_identity import canonical_json_bytes, sha256_content_id
+from ai_trading_scanner.domain.content_identity import canonical_json_bytes_v2, sha256_content_id_v2
 from ai_trading_scanner.domain.execution import (
     DataRunMode,
     ExecutionDimensions,
@@ -66,6 +63,17 @@ def _reject_float(value: object, label: str) -> object:
     return value
 
 
+def _normalized_decimal_content(
+    value: BaseModel | dict[str, object], identity_field: str, fields: tuple[str, ...]
+) -> dict[str, object]:
+    content = _identity_content(value, identity_field)
+    for field in fields:
+        item = content.get(field)
+        if item is not None and not isinstance(item, Decimal | float):
+            content[field] = Decimal(item)  # type: ignore[arg-type]
+    return content
+
+
 class ReplayPhase(IntEnum):
     """Versioned same-timestamp ordering for the Phase 6 V1 event trace."""
 
@@ -82,6 +90,7 @@ class ReplayPhase(IntEnum):
 
 
 class ReplayPayloadKind(StrEnum):
+    EXECUTION_RESOLUTION = "EXECUTION_RESOLUTION"
     SESSION_CONTROL = "SESSION_CONTROL"
     MARKET_EVENT = "MARKET_EVENT"
     INDICATOR_UPDATE = "INDICATOR_UPDATE"
@@ -113,6 +122,10 @@ class IntrabarAmbiguityPolicy(StrEnum):
 
 class RandomnessPolicy(StrEnum):
     NONE = "NONE"
+
+
+class ReplayTieBreakPolicy(StrEnum):
+    SEMANTIC_PAYLOAD_V1 = "SEMANTIC_PAYLOAD_V1"
 
 
 class SimulatedOrderSide(StrEnum):
@@ -163,7 +176,7 @@ class MarketEventReference(BaseModel):
 def calculate_market_event_id(
     event: MarketEventReference | dict[str, object],
 ) -> MarketEventId:
-    return MarketEventId.parse(sha256_content_id(_identity_content(event, "market_event_id")))
+    return MarketEventId.parse(sha256_content_id_v2(_identity_content(event, "market_event_id")))
 
 
 class SimulationExecutionConfiguration(BaseModel):
@@ -204,9 +217,10 @@ class SimulationExecutionConfiguration(BaseModel):
 def calculate_execution_model_id(
     configuration: SimulationExecutionConfiguration | dict[str, object],
 ) -> SimulationExecutionModelId:
-    return SimulationExecutionModelId.parse(
-        sha256_content_id(_identity_content(configuration, "execution_model_id"))
+    content = _normalized_decimal_content(
+        configuration, "execution_model_id", ("quantity_increment",)
     )
+    return SimulationExecutionModelId.parse(sha256_content_id_v2(content))
 
 
 class TransactionCostConfiguration(BaseModel):
@@ -247,9 +261,18 @@ class TransactionCostConfiguration(BaseModel):
 def calculate_cost_model_id(
     configuration: TransactionCostConfiguration | dict[str, object],
 ) -> TransactionCostModelId:
-    return TransactionCostModelId.parse(
-        sha256_content_id(_identity_content(configuration, "cost_model_id"))
+    content = _normalized_decimal_content(
+        configuration,
+        "cost_model_id",
+        (
+            "minimum_commission_per_order",
+            "commission_per_share",
+            "spread_bps",
+            "slippage_bps",
+            "other_fee_bps",
+        ),
     )
+    return TransactionCostModelId.parse(sha256_content_id_v2(content))
 
 
 class FillCostBreakdown(BaseModel):
@@ -344,6 +367,9 @@ class SimulationRunManifest(BaseModel):
     configuration_version_id: ConfigurationVersionId
     execution_model_id: SimulationExecutionModelId
     cost_model_id: TransactionCostModelId
+    replay_tie_break_policy: Literal[ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1] = (
+        ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1
+    )
     starting_capital: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     reporting_currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
     execution_dimensions: ExecutionDimensions
@@ -375,7 +401,9 @@ class SimulationRunManifest(BaseModel):
 def calculate_simulation_run_id(
     manifest: SimulationRunManifest | dict[str, object],
 ) -> SimulationRunId:
-    return SimulationRunId.parse(sha256_content_id(_identity_content(manifest, "run_id")))
+    content = _normalized_decimal_content(manifest, "run_id", ("starting_capital",))
+    content.setdefault("replay_tie_break_policy", ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1)
+    return SimulationRunId.parse(sha256_content_id_v2(content))
 
 
 class SimulatedOrder(BaseModel):
@@ -420,8 +448,8 @@ class SimulatedOrder(BaseModel):
     def validate_order(self) -> Self:
         if self.submitted_at < self.decision_at:
             raise ValueError("order submission cannot predate its decision")
-        if self.eligible_at <= self.submitted_at:
-            raise ValueError("order eligibility must be strictly later than submission")
+        if self.eligible_at < self.submitted_at:
+            raise ValueError("order eligibility cannot predate submission")
         if self.valid_until <= self.eligible_at:
             raise ValueError("order validity must extend beyond eligibility")
         if self.order_id != calculate_simulated_order_id(self):
@@ -430,7 +458,8 @@ class SimulatedOrder(BaseModel):
 
 
 def calculate_simulated_order_id(order: SimulatedOrder | dict[str, object]) -> SimulatedOrderId:
-    return SimulatedOrderId.parse(sha256_content_id(_identity_content(order, "order_id")))
+    content = _normalized_decimal_content(order, "order_id", ("quantity",))
+    return SimulatedOrderId.parse(sha256_content_id_v2(content))
 
 
 class SimulatedFill(BaseModel):
@@ -482,8 +511,8 @@ class SimulatedFill(BaseModel):
 
     @model_validator(mode="after")
     def validate_fill(self) -> Self:
-        if self.eligible_at <= self.submitted_at:
-            raise ValueError("fill eligibility must be strictly later than submission")
+        if self.eligible_at < self.submitted_at:
+            raise ValueError("fill eligibility cannot predate submission")
         if self.execution_interval_start_at <= self.eligible_at:
             raise ValueError("execution interval open must be strictly later than eligibility")
         if self.execution_interval_end_at <= self.execution_interval_start_at:
@@ -510,7 +539,8 @@ class SimulatedFill(BaseModel):
 
 
 def calculate_simulated_fill_id(fill: SimulatedFill | dict[str, object]) -> SimulatedFillId:
-    return SimulatedFillId.parse(sha256_content_id(_identity_content(fill, "fill_id")))
+    content = _normalized_decimal_content(fill, "fill_id", ("quantity", "fill_price"))
+    return SimulatedFillId.parse(sha256_content_id_v2(content))
 
 
 def validate_fill_against_order(fill: SimulatedFill, order: SimulatedOrder) -> None:
@@ -549,7 +579,9 @@ class ReplayEvent(BaseModel):
     run_id: SimulationRunId
     scheduled_at: datetime
     phase: ReplayPhase
-    tie_break_key: str = Field(min_length=1, max_length=256)
+    tie_break_policy: Literal[ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1] = (
+        ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1
+    )
     payload_kind: ReplayPayloadKind
     payload_id: str = Field(min_length=1, max_length=256)
 
@@ -560,12 +592,10 @@ class ReplayEvent(BaseModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
-        if self.tie_break_key != self.tie_break_key.strip():
-            raise ValueError("tie-break key cannot contain surrounding whitespace")
         if self.payload_id != self.payload_id.strip():
             raise ValueError("payload identity cannot contain surrounding whitespace")
         allowed_payloads = {
-            ReplayPhase.EXECUTION_RESOLUTION: {ReplayPayloadKind.SIMULATED_ORDER},
+            ReplayPhase.EXECUTION_RESOLUTION: {ReplayPayloadKind.EXECUTION_RESOLUTION},
             ReplayPhase.FILL: {ReplayPayloadKind.SIMULATED_FILL},
             ReplayPhase.PORTFOLIO_UPDATE: {
                 ReplayPayloadKind.POSITION_CHANGE,
@@ -588,11 +618,21 @@ class ReplayEvent(BaseModel):
 
     @property
     def ordering_key(self) -> tuple[datetime, int, str]:
-        return (self.scheduled_at, int(self.phase), self.tie_break_key)
+        semantic_key = f"{self.payload_kind.value}:{self.payload_id}"
+        return (self.scheduled_at, int(self.phase), semantic_key)
 
 
 def calculate_replay_event_id(event: ReplayEvent | dict[str, object]) -> ReplayEventId:
-    return ReplayEventId.parse(sha256_content_id(_identity_content(event, "replay_event_id")))
+    content = _identity_content(event, "replay_event_id")
+    content.setdefault("tie_break_policy", ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1)
+    return ReplayEventId.parse(sha256_content_id_v2(content))
+
+
+def order_replay_events(events: tuple[ReplayEvent, ...]) -> tuple[ReplayEvent, ...]:
+    """Derive the one canonical order; callers cannot supply ordering semantics."""
+    ordered = tuple(sorted(events, key=lambda event: event.ordering_key))
+    validate_replay_trace(ordered)
+    return ordered
 
 
 def validate_replay_trace(events: tuple[ReplayEvent, ...]) -> None:
@@ -613,45 +653,8 @@ def validate_replay_trace(events: tuple[ReplayEvent, ...]) -> None:
 def serialize_replay_events(events: tuple[ReplayEvent, ...]) -> bytes:
     """Return canonical UTF-8 NDJSON bytes suitable for a local replay artifact."""
     validate_replay_trace(events)
-    return b"".join(canonical_json_bytes(event) + b"\n" for event in events)
+    return b"".join(canonical_json_bytes_v2(event) + b"\n" for event in events)
 
 
 def calculate_replay_trace_hash(events: tuple[ReplayEvent, ...]) -> str:
     return hashlib.sha256(serialize_replay_events(events)).hexdigest()
-
-
-class SimulationResult(BaseModel):
-    """Stable final linkage; metrics and persistence are later Phase 6 work."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    result_id: SimulationResultId
-    schema_version: Literal["simulation-result-v1"] = "simulation-result-v1"
-    run_id: SimulationRunId
-    status: SimulationResultStatus
-    replay_trace_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    event_ids: tuple[ReplayEventId, ...] = Field(min_length=1)
-    final_portfolio_snapshot_id: PortfolioSnapshotId
-    realized_trade_result_ids: tuple[RealizedTradeResultId, ...] = ()
-    finalized_at: datetime
-
-    @field_validator("finalized_at")
-    @classmethod
-    def normalize_time(cls, value: datetime) -> datetime:
-        return _aware_utc(value)
-
-    @model_validator(mode="after")
-    def validate_result(self) -> Self:
-        if len(set(self.event_ids)) != len(self.event_ids):
-            raise ValueError("simulation result event identities must be unique")
-        if len(set(self.realized_trade_result_ids)) != len(self.realized_trade_result_ids):
-            raise ValueError("realized trade result identities must be unique")
-        if self.result_id != calculate_simulation_result_id(self):
-            raise ValueError("simulation result identity does not match content")
-        return self
-
-
-def calculate_simulation_result_id(
-    result: SimulationResult | dict[str, object],
-) -> SimulationResultId:
-    return SimulationResultId.parse(sha256_content_id(_identity_content(result, "result_id")))

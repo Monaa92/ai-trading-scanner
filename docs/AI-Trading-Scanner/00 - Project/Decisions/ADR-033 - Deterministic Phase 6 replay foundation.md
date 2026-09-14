@@ -9,13 +9,13 @@ Phase 2 records event and availability time, but a backtest also needs determini
 
 ## Decision
 
-Use a discrete-event V1 ordered by `(scheduled_at, causal_phase, stable_tie_break_key)`. Same-time phases are: execution resolution, fills, portfolio updates, session controls, market-data availability, indicator updates, strategy evaluation, risk evaluation, order submission and result finalization. This preserves the already accepted [[00 - Project/Decisions/ADR-013 - Causal hybrid backtesting and conservative ambiguity]] boundary.
+Use a discrete-event V1 ordered by `(scheduled_at, causal_phase, semantic_payload_key)`. The manifest binds `SEMANTIC_PAYLOAD_V1`; callers cannot supply ordering keys. The semantic key is derived from payload kind and its immutable content identity. Same-time phases are: execution resolution, fills, portfolio updates, session controls, market-data availability, indicator updates, strategy evaluation, risk evaluation, order submission and result finalization. This preserves the already accepted [[00 - Project/Decisions/ADR-013 - Causal hybrid backtesting and conservative ambiguity]] boundary.
 
-A V1 market order is eligible strictly after submission plus configured latency and may use only the next eligible bar open. The simulated execution time is that later interval open; the fill becomes observable to the replay only when the source bar is available. Missing next data expires the order unfilled, gaps use the next eligible open, same-interval ambiguity is stop-first, partial fills and randomness are disabled in this foundation version. These assumptions are immutable, content-identified configuration.
+A V1 market order's eligibility timestamp equals submission plus configured nonnegative latency; zero latency is valid. It may fill only at the first canonical bar open strictly later than that eligibility timestamp. The simulated execution time is that later interval open; the fill becomes observable to replay only when the source bar is available. Missing next data expires the order unfilled, gaps use the next eligible open, same-interval ambiguity is stop-first, partial fills and randomness are disabled in this foundation version. These assumptions are immutable, content-identified configuration.
 
 The causal bar-open price remains the gross fill reference. Commission, spread, slippage and other fees are separate exact monetary components and are subtracted once when computing net performance. Phase 6 V1 portfolio contracts use Decimal, long-only weighted-average accounting, one currency per isolated run, and conserved cash/equity identities. A full FX ledger remains blocking for the EUR-funded US-equity experiment.
 
-Canonical UTF-8 NDJSON is the initial ordered event serialization, accompanied later by immutable manifest/result JSON and checksums. The current foundation produces deterministic bytes and identities but does not yet implement an atomic filesystem writer, restart recovery, a database or the complete replay loop.
+Canonical UTF-8 NDJSON is the initial ordered event serialization. A typed immutable replay artifact binds the manifest, events, payload kinds and identities, causal timestamps, run/owner attribution, final portfolio, realized trades and finalization. A COMPLETE result derives its trace hash, ordered event identities and accounting references from that validated artifact. Phase 6 V2 content identities canonicalize mathematically equivalent finite Decimals to one exact, float-free representation; Phase 1–5 V1 identity behavior remains unchanged. The foundation still has no atomic filesystem writer, restart recovery, database or complete replay loop.
 
 ## Rationale
 
@@ -23,7 +23,7 @@ The ordering makes causal visibility and same-time races reviewable. A later bar
 
 ## Consequences
 
-Equivalent immutable inputs produce identical contract identities and event bytes. The foundation cannot claim a completed backtest: no scheduler, strategy/risk orchestration, reservation-to-fill transition, stop/target lifecycle, atomic store, metrics or four-agent runner exists. One-currency V1 cannot silently assume EUR equals USD. Alternative execution, partial-fill, stochastic, FX or persistence behavior requires a new execution/storage version and relevant adversarial review.
+Equivalent immutable inputs, including equivalent Decimal scales and exponent forms, produce identical Phase 6 contract identities and event bytes. Correcting the pre-completion Phase 6 identity scheme changes candidate identities relative to rejected candidate `d56de875001ac3c18168d4efdd1f35c3f1b82ead`; no completed historical Phase 6 results exist to migrate. The foundation cannot claim a completed backtest: no scheduler, strategy/risk orchestration service, reservation-to-fill transaction, stop/target lifecycle, atomic store, metrics or four-agent runner exists. One-currency V1 cannot silently assume EUR equals USD. Alternative execution, partial-fill, stochastic, FX or persistence behavior requires a new execution/storage version and relevant adversarial review.
 
 ## Alternatives considered
 

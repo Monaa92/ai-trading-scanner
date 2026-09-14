@@ -31,18 +31,22 @@ from ai_trading_scanner.simulation import (
     CashLedgerSnapshot,
     MarketEventReference,
     PortfolioSnapshot,
+    ReplayArtifactBundle,
     ReplayEvent,
     ReplayPayloadKind,
     ReplayPhase,
+    ResultFinalizationPayload,
     SimulatedFill,
     SimulatedOrder,
     SimulatedOrderSide,
     SimulationExecutionConfiguration,
+    SimulationResultStatus,
     SimulationRunManifest,
     TransactionCostConfiguration,
     calculate_cost_model_id,
     calculate_execution_model_id,
     calculate_fill_costs,
+    calculate_marker_payload_id,
     calculate_market_event_id,
     calculate_portfolio_snapshot_id,
     calculate_replay_event_id,
@@ -259,11 +263,10 @@ def initial_portfolio(**changes: object) -> PortfolioSnapshot:
 def replay_event(
     phase: ReplayPhase = ReplayPhase.MARKET_DATA_AVAILABLE,
     scheduled_at: datetime = BASE,
-    tie_break_key: str = "0001",
     **changes: object,
 ) -> ReplayEvent:
     default_payload = {
-        ReplayPhase.EXECUTION_RESOLUTION: ReplayPayloadKind.SIMULATED_ORDER,
+        ReplayPhase.EXECUTION_RESOLUTION: ReplayPayloadKind.EXECUTION_RESOLUTION,
         ReplayPhase.FILL: ReplayPayloadKind.SIMULATED_FILL,
         ReplayPhase.PORTFOLIO_UPDATE: ReplayPayloadKind.PORTFOLIO_SNAPSHOT,
         ReplayPhase.SESSION_CONTROL: ReplayPayloadKind.SESSION_CONTROL,
@@ -279,11 +282,11 @@ def replay_event(
         "run_id": run_manifest().run_id,
         "scheduled_at": scheduled_at,
         "phase": phase,
-        "tie_break_key": tie_break_key,
         "payload_kind": default_payload,
         "payload_id": digest("9"),
     }
     content.update(changes)
+    content["payload_id"] = str(content["payload_id"])
     return ReplayEvent.model_validate(
         {"replay_event_id": calculate_replay_event_id(content), **content}
     )
@@ -291,3 +294,38 @@ def replay_event(
 
 def previous_snapshot_id() -> PortfolioSnapshotId:
     return PortfolioSnapshotId.parse(digest("8"))
+
+
+def minimal_replay_artifact(
+    *, status: SimulationResultStatus = SimulationResultStatus.COMPLETE
+) -> ReplayArtifactBundle:
+    manifest = run_manifest()
+    portfolio = initial_portfolio()
+    finalization_content: dict[str, object] = {
+        "schema_version": "result-finalization-payload-v1",
+        "run_id": manifest.run_id,
+        "status": status,
+        "final_portfolio_snapshot_id": portfolio.portfolio_snapshot_id,
+        "realized_trade_result_ids": (),
+        "finalized_at": BASE.replace(minute=41),
+    }
+    finalization = ResultFinalizationPayload.model_validate(
+        {"payload_id": calculate_marker_payload_id(finalization_content), **finalization_content}
+    )
+    return ReplayArtifactBundle.create(
+        manifest=manifest,
+        events=(
+            replay_event(
+                ReplayPhase.PORTFOLIO_UPDATE,
+                portfolio.as_of,
+                payload_id=portfolio.portfolio_snapshot_id,
+            ),
+            replay_event(
+                ReplayPhase.RESULT_FINALIZATION,
+                finalization.finalized_at,
+                payload_id=finalization.payload_id,
+            ),
+        ),
+        portfolio_snapshots=(portfolio,),
+        finalizations=(finalization,),
+    )

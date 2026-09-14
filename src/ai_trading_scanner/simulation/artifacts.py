@@ -1,0 +1,524 @@
+"""Typed immutable replay artifacts and coherent simulation results."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from ai_trading_scanner.domain import (
+    AgentId,
+    DatasetId,
+    InstrumentId,
+    PortfolioSnapshotId,
+    RealizedTradeResultId,
+    ReplayArtifactId,
+    ReplayEventId,
+    SimulatedOrderId,
+    SimulationResultId,
+    SimulationRunId,
+)
+from ai_trading_scanner.domain.content_identity import sha256_content_id_v2
+from ai_trading_scanner.indicators import IndicatorSeries
+from ai_trading_scanner.risk import RiskDecision
+from ai_trading_scanner.simulation.models import (
+    MarketEventReference,
+    ReplayEvent,
+    ReplayPayloadKind,
+    ReplayPhase,
+    SimulatedFill,
+    SimulatedOrder,
+    SimulationResultStatus,
+    SimulationRunManifest,
+    calculate_replay_trace_hash,
+    order_replay_events,
+    validate_fill_against_order,
+)
+from ai_trading_scanner.simulation.portfolio import (
+    PortfolioSnapshot,
+    PositionChange,
+    RealizedTradeResult,
+)
+from ai_trading_scanner.strategies import NoTradeDecision, TradeProposalDecision
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("timestamp must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _without_id(value: BaseModel | dict[str, object], field: str) -> dict[str, object]:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="python", exclude={field})
+    return {key: item for key, item in value.items() if key != field}
+
+
+class ExecutionResolutionOutcome(StrEnum):
+    FILL_READY = "FILL_READY"
+    EXPIRED_UNFILLED = "EXPIRED_UNFILLED"
+
+
+class ExecutionResolutionPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    payload_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    schema_version: Literal["execution-resolution-payload-v1"] = "execution-resolution-payload-v1"
+    run_id: SimulationRunId
+    order_id: SimulatedOrderId
+    resolved_at: datetime
+    outcome: ExecutionResolutionOutcome
+    source_market_event_id: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @field_validator("resolved_at")
+    @classmethod
+    def normalize_time(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> Self:
+        if (self.outcome is ExecutionResolutionOutcome.FILL_READY) != (
+            self.source_market_event_id is not None
+        ):
+            raise ValueError("fill-ready resolution requires exactly one market source")
+        if self.payload_id != calculate_marker_payload_id(self):
+            raise ValueError("execution resolution payload identity does not match content")
+        return self
+
+
+class SessionControlPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    payload_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    schema_version: Literal["session-control-payload-v1"] = "session-control-payload-v1"
+    run_id: SimulationRunId
+    effective_at: datetime
+    action: str = Field(min_length=1, max_length=64)
+
+    @field_validator("effective_at")
+    @classmethod
+    def normalize_time(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> Self:
+        if self.payload_id != calculate_marker_payload_id(self):
+            raise ValueError("session-control payload identity does not match content")
+        return self
+
+
+class IndicatorUpdatePayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    payload_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    schema_version: Literal["indicator-update-payload-v1"] = "indicator-update-payload-v1"
+    run_id: SimulationRunId
+    agent_id: AgentId
+    instrument_id: InstrumentId
+    dataset_id: DatasetId
+    as_of: datetime
+    series: tuple[IndicatorSeries, ...] = Field(min_length=1)
+
+    @field_validator("as_of")
+    @classmethod
+    def normalize_time(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> Self:
+        configuration_ids = tuple(item.configuration_id for item in self.series)
+        if len(set(configuration_ids)) != len(configuration_ids):
+            raise ValueError("indicator update configurations must be unique")
+        if tuple(sorted(configuration_ids, key=str)) != configuration_ids:
+            raise ValueError("indicator update configurations must be canonically ordered")
+        if any(
+            item.dataset_id != self.dataset_id
+            or item.as_of != self.as_of
+            or any(point.instrument_id != self.instrument_id for point in item.points)
+            for item in self.series
+        ):
+            raise ValueError("indicator update causal lineage differs")
+        if self.payload_id != calculate_marker_payload_id(self):
+            raise ValueError("indicator update payload identity does not match content")
+        return self
+
+
+class ResultFinalizationPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    payload_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    schema_version: Literal["result-finalization-payload-v1"] = "result-finalization-payload-v1"
+    run_id: SimulationRunId
+    status: SimulationResultStatus
+    final_portfolio_snapshot_id: PortfolioSnapshotId
+    realized_trade_result_ids: tuple[RealizedTradeResultId, ...] = ()
+    finalized_at: datetime
+
+    @field_validator("finalized_at")
+    @classmethod
+    def normalize_time(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> Self:
+        if len(set(self.realized_trade_result_ids)) != len(self.realized_trade_result_ids):
+            raise ValueError("finalization realized trades must be unique")
+        if self.payload_id != calculate_marker_payload_id(self):
+            raise ValueError("result finalization payload identity does not match content")
+        return self
+
+
+MarkerPayload = (
+    ExecutionResolutionPayload
+    | SessionControlPayload
+    | IndicatorUpdatePayload
+    | ResultFinalizationPayload
+)
+
+
+def calculate_marker_payload_id(payload: MarkerPayload | dict[str, object]) -> str:
+    return sha256_content_id_v2(_without_id(payload, "payload_id"))
+
+
+class _PayloadBinding(BaseModel):
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    kind: ReplayPayloadKind
+    payload_id: str
+    causal_at: datetime
+    phase: ReplayPhase
+
+
+class ReplayArtifactBundle(BaseModel):
+    """Complete typed registry for one internally coherent replay trace."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    artifact_id: ReplayArtifactId
+    schema_version: Literal["replay-artifact-v2"] = "replay-artifact-v2"
+    manifest: SimulationRunManifest
+    events: tuple[ReplayEvent, ...] = Field(min_length=1)
+    execution_resolutions: tuple[ExecutionResolutionPayload, ...] = ()
+    session_controls: tuple[SessionControlPayload, ...] = ()
+    market_events: tuple[MarketEventReference, ...] = ()
+    indicator_updates: tuple[IndicatorUpdatePayload, ...] = ()
+    strategy_decisions: tuple[NoTradeDecision | TradeProposalDecision, ...] = ()
+    risk_decisions: tuple[RiskDecision, ...] = ()
+    orders: tuple[SimulatedOrder, ...] = ()
+    fills: tuple[SimulatedFill, ...] = ()
+    position_changes: tuple[PositionChange, ...] = ()
+    portfolio_snapshots: tuple[PortfolioSnapshot, ...] = Field(min_length=1)
+    realized_trades: tuple[RealizedTradeResult, ...] = ()
+    finalizations: tuple[ResultFinalizationPayload, ...] = Field(min_length=1, max_length=1)
+
+    @classmethod
+    def create(cls, **content: object) -> ReplayArtifactBundle:
+        events: tuple[ReplayEvent, ...] = tuple(content["events"])  # type: ignore[arg-type]
+        content["events"] = order_replay_events(events)
+        content.setdefault("schema_version", "replay-artifact-v2")
+        for field_name in (
+            "execution_resolutions",
+            "session_controls",
+            "market_events",
+            "indicator_updates",
+            "strategy_decisions",
+            "risk_decisions",
+            "orders",
+            "fills",
+            "position_changes",
+            "realized_trades",
+        ):
+            content.setdefault(field_name, ())
+        return cls.model_validate({"artifact_id": calculate_replay_artifact_id(content), **content})
+
+    @model_validator(mode="after")
+    def validate_bundle(self) -> Self:
+        if self.events != order_replay_events(self.events):
+            raise ValueError("replay artifact events are not canonically ordered")
+        run_id = self.manifest.run_id
+        bindings: list[_PayloadBinding] = []
+
+        def add(
+            kind: ReplayPayloadKind,
+            payload_id: object,
+            at: datetime,
+            phase: ReplayPhase,
+        ) -> None:
+            bindings.append(
+                _PayloadBinding(kind=kind, payload_id=str(payload_id), causal_at=at, phase=phase)
+            )
+
+        for resolution in self.execution_resolutions:
+            if resolution.run_id != run_id:
+                raise ValueError("execution resolution belongs to a foreign run")
+            add(
+                ReplayPayloadKind.EXECUTION_RESOLUTION,
+                resolution.payload_id,
+                resolution.resolved_at,
+                ReplayPhase.EXECUTION_RESOLUTION,
+            )
+        for control in self.session_controls:
+            if control.run_id != run_id:
+                raise ValueError("session control belongs to a foreign run")
+            add(
+                ReplayPayloadKind.SESSION_CONTROL,
+                control.payload_id,
+                control.effective_at,
+                ReplayPhase.SESSION_CONTROL,
+            )
+        for market in self.market_events:
+            if market.dataset_id != self.manifest.dataset_id:
+                raise ValueError("market event belongs to a foreign dataset")
+            add(
+                ReplayPayloadKind.MARKET_EVENT,
+                market.market_event_id,
+                market.available_at,
+                ReplayPhase.MARKET_DATA_AVAILABLE,
+            )
+        for indicator in self.indicator_updates:
+            if (
+                indicator.run_id != run_id
+                or indicator.agent_id != self.manifest.agent_id
+                or indicator.dataset_id != self.manifest.dataset_id
+                or tuple(item.configuration_id for item in indicator.series)
+                != self.manifest.indicator_configuration_ids
+            ):
+                raise ValueError("indicator update attribution differs from run manifest")
+            add(
+                ReplayPayloadKind.INDICATOR_UPDATE,
+                indicator.payload_id,
+                indicator.as_of,
+                ReplayPhase.INDICATOR_UPDATE,
+            )
+        for decision in self.strategy_decisions:
+            if (
+                decision.agent_id != self.manifest.agent_id
+                or decision.strategy_id != self.manifest.strategy_id
+                or decision.strategy_configuration_id != self.manifest.strategy_configuration_id
+                or decision.dataset_id != self.manifest.dataset_id
+                or decision.indicator_configuration_ids != self.manifest.indicator_configuration_ids
+            ):
+                raise ValueError("strategy decision attribution differs from run manifest")
+            add(
+                ReplayPayloadKind.STRATEGY_DECISION,
+                decision.decision_id,
+                decision.as_of,
+                ReplayPhase.STRATEGY_EVALUATION,
+            )
+        for risk in self.risk_decisions:
+            if (
+                risk.account_id != self.manifest.account_id
+                or risk.allocation_id != self.manifest.allocation_id
+                or risk.agent_id != self.manifest.agent_id
+                or risk.risk_configuration_id != self.manifest.risk_configuration_id
+            ):
+                raise ValueError("risk decision attribution differs from run manifest")
+            add(
+                ReplayPayloadKind.RISK_DECISION,
+                risk.risk_decision_id,
+                risk.evaluated_at,
+                ReplayPhase.RISK_EVALUATION,
+            )
+        for order in self.orders:
+            self._require_run_ownership(order)
+            add(
+                ReplayPayloadKind.SIMULATED_ORDER,
+                order.order_id,
+                order.submitted_at,
+                ReplayPhase.ORDER_SUBMISSION,
+            )
+        order_by_id = {item.order_id: item for item in self.orders}
+        market_by_id = {item.market_event_id: item for item in self.market_events}
+        for fill in self.fills:
+            self._require_run_ownership(fill)
+            source_order = order_by_id.get(fill.order_id)
+            if source_order is None:
+                raise ValueError("fill references a missing simulated order")
+            validate_fill_against_order(fill, source_order)
+            if market_by_id.get(fill.market_event.market_event_id) != fill.market_event:
+                raise ValueError("fill source market artifact is missing or differs")
+            add(
+                ReplayPayloadKind.SIMULATED_FILL,
+                fill.fill_id,
+                fill.fill_at,
+                ReplayPhase.FILL,
+            )
+        for change in self.position_changes:
+            self._require_run_ownership(change)
+            add(
+                ReplayPayloadKind.POSITION_CHANGE,
+                change.position_change_id,
+                change.changed_at,
+                ReplayPhase.PORTFOLIO_UPDATE,
+            )
+        portfolio_by_id = {item.portfolio_snapshot_id: item for item in self.portfolio_snapshots}
+        for portfolio in self.portfolio_snapshots:
+            self._require_run_ownership(portfolio)
+            if portfolio.starting_capital != self.manifest.starting_capital:
+                raise ValueError("portfolio starting capital differs from run manifest")
+            add(
+                ReplayPayloadKind.PORTFOLIO_SNAPSHOT,
+                portfolio.portfolio_snapshot_id,
+                portfolio.as_of,
+                ReplayPhase.PORTFOLIO_UPDATE,
+            )
+        trade_by_id = {item.realized_trade_result_id: item for item in self.realized_trades}
+        for trade in self.realized_trades:
+            self._require_run_ownership(trade)
+            if trade.strategy_id != self.manifest.strategy_id:
+                raise ValueError("realized trade strategy differs from run manifest")
+            add(
+                ReplayPayloadKind.REALIZED_TRADE,
+                trade.realized_trade_result_id,
+                trade.closed_at,
+                ReplayPhase.PORTFOLIO_UPDATE,
+            )
+        finalization = self.finalizations[0]
+        if finalization.run_id != run_id:
+            raise ValueError("result finalization belongs to a foreign run")
+        final_portfolio = portfolio_by_id.get(finalization.final_portfolio_snapshot_id)
+        if final_portfolio is None:
+            raise ValueError("result finalization references a missing final portfolio")
+        if set(finalization.realized_trade_result_ids) != set(trade_by_id):
+            raise ValueError("result finalization realized trades do not match artifact")
+        if finalization.status is SimulationResultStatus.COMPLETE:
+            fill_ids = {fill.fill_id for fill in self.fills}
+            changed_fill_ids = {change.fill_id for change in self.position_changes}
+            if fill_ids != changed_fill_ids:
+                raise ValueError(
+                    "complete result does not reconcile every fill to portfolio changes"
+                )
+            trade_fill_ids = {
+                fill_id
+                for trade in self.realized_trades
+                for fill_id in (*trade.entry_fill_ids, *trade.exit_fill_ids)
+            }
+            if not trade_fill_ids.issubset(fill_ids):
+                raise ValueError("complete result realized trades reference missing fills")
+            accounting_times = [
+                *(fill.fill_at for fill in self.fills),
+                *(change.changed_at for change in self.position_changes),
+            ]
+            if accounting_times and final_portfolio.as_of < max(accounting_times):
+                raise ValueError("complete result final portfolio predates fill accounting")
+        if finalization.finalized_at < max(
+            [final_portfolio.as_of, *(trade.closed_at for trade in self.realized_trades)]
+        ):
+            raise ValueError("result finalization predates reconciled accounting")
+        add(
+            ReplayPayloadKind.RUN_RESULT,
+            finalization.payload_id,
+            finalization.finalized_at,
+            ReplayPhase.RESULT_FINALIZATION,
+        )
+
+        registry = {(item.kind, item.payload_id): item for item in bindings}
+        if len(registry) != len(bindings):
+            raise ValueError("replay artifact contains duplicate payload identities")
+        references = [(event.payload_kind, event.payload_id) for event in self.events]
+        if len(set(references)) != len(references):
+            raise ValueError("replay trace references one payload more than once")
+        if set(references) != set(registry):
+            raise ValueError("replay trace contains missing or unreferenced typed payloads")
+        for event in self.events:
+            binding = registry[(event.payload_kind, event.payload_id)]
+            if event.run_id != run_id or event.phase is not binding.phase:
+                raise ValueError("replay event phase or run differs from typed payload")
+            if event.scheduled_at != binding.causal_at:
+                raise ValueError("replay event timestamp differs from typed payload causality")
+        if self.events[-1].payload_kind is not ReplayPayloadKind.RUN_RESULT:
+            raise ValueError("result finalization must be the final replay event")
+        if finalization.finalized_at < max(event.scheduled_at for event in self.events[:-1]):
+            raise ValueError("result finalization predates the replay trace")
+        if self.artifact_id != calculate_replay_artifact_id(self):
+            raise ValueError("replay artifact identity does not match content")
+        return self
+
+    def _require_run_ownership(
+        self,
+        payload: SimulatedOrder
+        | SimulatedFill
+        | PositionChange
+        | PortfolioSnapshot
+        | RealizedTradeResult,
+    ) -> None:
+        if (
+            payload.run_id != self.manifest.run_id
+            or payload.account_id != self.manifest.account_id
+            or payload.allocation_id != self.manifest.allocation_id
+            or payload.agent_id != self.manifest.agent_id
+        ):
+            raise ValueError("payload run or ownership differs from run manifest")
+
+
+def calculate_replay_artifact_id(
+    artifact: ReplayArtifactBundle | dict[str, object],
+) -> ReplayArtifactId:
+    return ReplayArtifactId.parse(sha256_content_id_v2(_without_id(artifact, "artifact_id")))
+
+
+class SimulationResult(BaseModel):
+    """A result whose linkage is re-derived from one validated replay artifact."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    result_id: SimulationResultId
+    schema_version: Literal["simulation-result-v2"] = "simulation-result-v2"
+    artifact: ReplayArtifactBundle
+    run_id: SimulationRunId
+    status: SimulationResultStatus
+    replay_trace_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    event_ids: tuple[ReplayEventId, ...] = Field(min_length=1)
+    final_portfolio_snapshot_id: PortfolioSnapshotId
+    realized_trade_result_ids: tuple[RealizedTradeResultId, ...] = ()
+    finalized_at: datetime
+
+    @classmethod
+    def create(cls, artifact: ReplayArtifactBundle) -> SimulationResult:
+        finalization = artifact.finalizations[0]
+        content: dict[str, object] = {
+            "schema_version": "simulation-result-v2",
+            "artifact": artifact,
+            "run_id": artifact.manifest.run_id,
+            "status": finalization.status,
+            "replay_trace_sha256": calculate_replay_trace_hash(artifact.events),
+            "event_ids": tuple(event.replay_event_id for event in artifact.events),
+            "final_portfolio_snapshot_id": finalization.final_portfolio_snapshot_id,
+            "realized_trade_result_ids": finalization.realized_trade_result_ids,
+            "finalized_at": finalization.finalized_at,
+        }
+        return cls.model_validate({"result_id": calculate_simulation_result_id(content), **content})
+
+    @field_validator("finalized_at")
+    @classmethod
+    def normalize_time(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+    @model_validator(mode="after")
+    def validate_result(self) -> Self:
+        finalization = self.artifact.finalizations[0]
+        expected_event_ids = tuple(event.replay_event_id for event in self.artifact.events)
+        expected_trace_hash = calculate_replay_trace_hash(self.artifact.events)
+        if (
+            self.run_id != self.artifact.manifest.run_id
+            or self.status is not finalization.status
+            or self.replay_trace_sha256 != expected_trace_hash
+            or self.event_ids != expected_event_ids
+            or self.final_portfolio_snapshot_id != finalization.final_portfolio_snapshot_id
+            or self.realized_trade_result_ids != finalization.realized_trade_result_ids
+            or self.finalized_at != finalization.finalized_at
+        ):
+            raise ValueError("simulation result does not match its validated replay artifact")
+        if self.finalized_at < self.artifact.events[-1].scheduled_at:
+            raise ValueError("simulation result finalization predates its final event")
+        if self.result_id != calculate_simulation_result_id(self):
+            raise ValueError("simulation result identity does not match content")
+        return self
+
+
+def calculate_simulation_result_id(
+    result: SimulationResult | dict[str, object],
+) -> SimulationResultId:
+    return SimulationResultId.parse(sha256_content_id_v2(_without_id(result, "result_id")))

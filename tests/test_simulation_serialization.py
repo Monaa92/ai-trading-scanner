@@ -4,15 +4,19 @@ import pytest
 from pydantic import ValidationError
 from simulation_helpers import BASE, digest, initial_portfolio, replay_event, run_manifest
 
-from ai_trading_scanner.domain import RealizedTradeResultId
 from ai_trading_scanner.simulation import (
+    ReplayArtifactBundle,
     ReplayEvent,
     ReplayPayloadKind,
     ReplayPhase,
+    ResultFinalizationPayload,
     SimulationResult,
     SimulationResultStatus,
+    calculate_marker_payload_id,
+    calculate_replay_artifact_id,
     calculate_replay_trace_hash,
     calculate_simulation_result_id,
+    order_replay_events,
     serialize_replay_events,
     validate_replay_trace,
 )
@@ -23,35 +27,30 @@ def canonical_trace() -> tuple[ReplayEvent, ...]:
         replay_event(
             ReplayPhase.FILL,
             BASE,
-            "fill:0001",
             payload_kind=ReplayPayloadKind.SIMULATED_FILL,
             payload_id=digest("1"),
         ),
         replay_event(
             ReplayPhase.PORTFOLIO_UPDATE,
             BASE,
-            "portfolio:0001",
             payload_kind=ReplayPayloadKind.PORTFOLIO_SNAPSHOT,
             payload_id=digest("2"),
         ),
         replay_event(
             ReplayPhase.MARKET_DATA_AVAILABLE,
             BASE,
-            "market:0001",
             payload_kind=ReplayPayloadKind.MARKET_EVENT,
             payload_id=digest("3"),
         ),
         replay_event(
             ReplayPhase.STRATEGY_EVALUATION,
             BASE,
-            "decision:0001",
             payload_kind=ReplayPayloadKind.STRATEGY_DECISION,
             payload_id=digest("4"),
         ),
         replay_event(
             ReplayPhase.ORDER_SUBMISSION,
             BASE,
-            "order:0001",
             payload_kind=ReplayPayloadKind.SIMULATED_ORDER,
             payload_id=digest("5"),
         ),
@@ -86,16 +85,16 @@ def test_out_of_order_duplicate_or_mixed_run_trace_fails_closed() -> None:
         validate_replay_trace((events[0], foreign))
 
 
-def test_tie_break_key_is_required_for_same_phase_determinism() -> None:
-    first = replay_event(ReplayPhase.MARKET_DATA_AVAILABLE, BASE, "same")
+def test_same_phase_tie_break_is_semantic_and_caller_cannot_override_it() -> None:
+    first = replay_event(ReplayPhase.MARKET_DATA_AVAILABLE, BASE, payload_id=digest("7"))
     second = replay_event(
         ReplayPhase.MARKET_DATA_AVAILABLE,
         BASE,
-        "same",
         payload_id=digest("8"),
     )
-    with pytest.raises(ValueError, match="ordering keys"):
-        validate_replay_trace((first, second))
+    assert order_replay_events((second, first)) == order_replay_events((first, second))
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        replay_event(tie_break_key="caller-controlled")
 
 
 def test_canonical_ndjson_serialization_and_trace_hash_are_stable() -> None:
@@ -139,22 +138,45 @@ def test_replay_event_rejects_naive_timestamp_and_stale_identity() -> None:
         type(event).model_validate(content)
 
 
-def simulation_result(**changes: object) -> SimulationResult:
-    events = trace()
-    content: dict[str, object] = {
-        "schema_version": "simulation-result-v1",
-        "run_id": run_manifest().run_id,
+def replay_artifact() -> ReplayArtifactBundle:
+    manifest = run_manifest()
+    portfolio = initial_portfolio()
+    finalization_content: dict[str, object] = {
+        "schema_version": "result-finalization-payload-v1",
+        "run_id": manifest.run_id,
         "status": SimulationResultStatus.COMPLETE,
-        "replay_trace_sha256": calculate_replay_trace_hash(events),
-        "event_ids": tuple(event.replay_event_id for event in events),
-        "final_portfolio_snapshot_id": initial_portfolio().portfolio_snapshot_id,
-        "realized_trade_result_ids": (RealizedTradeResultId.parse(digest("6")),),
+        "final_portfolio_snapshot_id": portfolio.portfolio_snapshot_id,
+        "realized_trade_result_ids": (),
         "finalized_at": BASE + timedelta(minutes=10),
     }
-    content.update(changes)
-    return SimulationResult.model_validate(
-        {"result_id": calculate_simulation_result_id(content), **content}
+    finalization = ResultFinalizationPayload.model_validate(
+        {
+            "payload_id": calculate_marker_payload_id(finalization_content),
+            **finalization_content,
+        }
     )
+    events = (
+        replay_event(
+            ReplayPhase.PORTFOLIO_UPDATE,
+            portfolio.as_of,
+            payload_id=portfolio.portfolio_snapshot_id,
+        ),
+        replay_event(
+            ReplayPhase.RESULT_FINALIZATION,
+            finalization.finalized_at,
+            payload_id=finalization.payload_id,
+        ),
+    )
+    return ReplayArtifactBundle.create(
+        manifest=manifest,
+        events=events,
+        portfolio_snapshots=(portfolio,),
+        finalizations=(finalization,),
+    )
+
+
+def simulation_result() -> SimulationResult:
+    return SimulationResult.create(replay_artifact())
 
 
 def test_result_identity_is_stable_and_binds_complete_trace() -> None:
@@ -162,14 +184,30 @@ def test_result_identity_is_stable_and_binds_complete_trace() -> None:
     second = simulation_result()
     assert first == second
 
-    changed = simulation_result(status=SimulationResultStatus.INCOMPLETE)
-    assert changed.result_id != first.result_id
+    content = first.model_dump(mode="python")
+    content["status"] = SimulationResultStatus.INCOMPLETE
+    content["result_id"] = calculate_simulation_result_id(content)
+    with pytest.raises(ValidationError, match="does not match"):
+        SimulationResult.model_validate(content)
 
 
-def test_result_rejects_duplicate_event_or_trade_linkage() -> None:
+def test_result_rejects_tampered_trace_or_event_linkage() -> None:
     result = simulation_result()
-    with pytest.raises(ValidationError, match="event identities"):
-        simulation_result(event_ids=(result.event_ids[0], result.event_ids[0]))
-    duplicate_trade = result.realized_trade_result_ids[0]
-    with pytest.raises(ValidationError, match="realized trade"):
-        simulation_result(realized_trade_result_ids=(duplicate_trade, duplicate_trade))
+    for field, value in (
+        ("replay_trace_sha256", "0" * 64),
+        ("event_ids", tuple(reversed(result.event_ids))),
+    ):
+        content = result.model_dump(mode="python")
+        content[field] = value
+        content["result_id"] = calculate_simulation_result_id(content)
+        with pytest.raises(ValidationError, match="does not match"):
+            SimulationResult.model_validate(content)
+
+
+def test_artifact_identity_rejects_payload_tampering() -> None:
+    artifact = replay_artifact()
+    content = artifact.model_dump(mode="python")
+    content["artifact_id"] = calculate_replay_artifact_id(content)
+    content["events"] = tuple(reversed(content["events"]))
+    with pytest.raises(ValidationError, match="canonically ordered"):
+        ReplayArtifactBundle.model_validate(content)

@@ -75,7 +75,7 @@ def test_full_auto_remains_independent_from_simulation_environment() -> None:
     [
         (market_event, {"available_at": BASE - timedelta(seconds=1)}, "available"),
         (simulated_order, {"submitted_at": BASE - timedelta(seconds=1)}, "submission"),
-        (simulated_order, {"eligible_at": BASE + timedelta(seconds=1)}, "eligibility"),
+        (simulated_order, {"eligible_at": BASE}, "eligibility"),
         (
             simulated_fill,
             {"execution_interval_start_at": BASE + timedelta(seconds=1)},
