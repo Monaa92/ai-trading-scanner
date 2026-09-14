@@ -78,20 +78,31 @@ class InMemoryCapitalCoordinator:
             if snapshot.account_id in self._parents:
                 raise DuplicateCapitalScopeError("parent account is already registered")
             self._validate_parent_loss_state(snapshot.account_id, loss_state)
-            self._parents[snapshot.account_id] = snapshot
-            self._allocated_capital_by_account[snapshot.account_id] = Decimal(0)
-            self._parent_loss_states[snapshot.account_id] = loss_state
-            self._parent_locks[snapshot.account_id] = RLock()
-            self._reservations_by_account[snapshot.account_id] = {}
-            self._safety_locks[snapshot.account_id] = {}
+            account_id = snapshot.account_id
+            try:
+                self._allocated_capital_by_account[account_id] = Decimal(0)
+                self._parent_loss_states[account_id] = loss_state
+                self._parent_locks[account_id] = RLock()
+                self._reservations_by_account[account_id] = {}
+                self._safety_locks[account_id] = {}
+                self._parents[account_id] = snapshot
+            except BaseException:
+                self._parents.pop(account_id, None)
+                self._allocated_capital_by_account.pop(account_id, None)
+                self._parent_loss_states.pop(account_id, None)
+                self._parent_locks.pop(account_id, None)
+                self._reservations_by_account.pop(account_id, None)
+                self._safety_locks.pop(account_id, None)
+                raise
 
     def register_allocation(
         self, snapshot: AllocationSnapshot, loss_state: LossStateSnapshot
     ) -> None:
-        try:
-            parent_lock = self._parent_locks[snapshot.account_id]
-        except KeyError as error:
-            raise UnknownCapitalScopeError("parent account is not registered") from error
+        with self._registry_lock:
+            try:
+                parent_lock = self._parent_locks[snapshot.account_id]
+            except KeyError as error:
+                raise UnknownCapitalScopeError("parent account is not registered") from error
         with parent_lock, self._registry_lock:
             parent = self._parent(snapshot.account_id)
             if snapshot.allocation_id in self._allocations:
@@ -106,13 +117,23 @@ class InMemoryCapitalCoordinator:
             if allocated + snapshot.allocated_capital > parent.total_capital:
                 raise ReservationTransitionError("allocation exceeds unassigned parent capital")
             self._validate_allocation_loss_state(snapshot, loss_state)
-            self._allocations[snapshot.allocation_id] = snapshot
-            self._allocation_by_agent[snapshot.agent_id] = snapshot.allocation_id
-            self._allocated_capital_by_account[snapshot.account_id] = (
-                allocated + snapshot.allocated_capital
-            )
-            self._allocation_loss_states[snapshot.allocation_id] = loss_state
-            self._allocation_locks[snapshot.allocation_id] = RLock()
+            allocation_id = snapshot.allocation_id
+            try:
+                self._allocation_by_agent[snapshot.agent_id] = allocation_id
+                self._allocated_capital_by_account[snapshot.account_id] = (
+                    allocated + snapshot.allocated_capital
+                )
+                self._allocation_loss_states[allocation_id] = loss_state
+                self._allocation_locks[allocation_id] = RLock()
+                self._allocations[allocation_id] = snapshot
+            except BaseException:
+                self._allocations.pop(allocation_id, None)
+                if self._allocation_by_agent.get(snapshot.agent_id) == allocation_id:
+                    self._allocation_by_agent.pop(snapshot.agent_id, None)
+                self._allocated_capital_by_account[snapshot.account_id] = allocated
+                self._allocation_loss_states.pop(allocation_id, None)
+                self._allocation_locks.pop(allocation_id, None)
+                raise
 
     def update_parent_loss_state(
         self, account_id: AccountId, loss_state: LossStateSnapshot
@@ -738,16 +759,18 @@ class InMemoryCapitalCoordinator:
             raise UnknownCapitalScopeError("parent account is not registered") from error
 
     def _parent(self, account_id: AccountId) -> ParentCapitalSnapshot:
-        try:
-            return self._parents[account_id]
-        except KeyError as error:
-            raise UnknownCapitalScopeError("parent account is not registered") from error
+        with self._registry_lock:
+            try:
+                return self._parents[account_id]
+            except KeyError as error:
+                raise UnknownCapitalScopeError("parent account is not registered") from error
 
     def _allocation(self, allocation_id: AllocationId) -> AllocationSnapshot:
-        try:
-            return self._allocations[allocation_id]
-        except KeyError as error:
-            raise UnknownCapitalScopeError("allocation is not registered") from error
+        with self._registry_lock:
+            try:
+                return self._allocations[allocation_id]
+            except KeyError as error:
+                raise UnknownCapitalScopeError("allocation is not registered") from error
 
     def _reservation(self, reservation_id: ReservationId) -> CapitalReservation:
         with self._registry_lock:
@@ -765,19 +788,21 @@ class InMemoryCapitalCoordinator:
 
     @contextmanager
     def _parent_lock(self, account_id: AccountId) -> Iterator[None]:
-        try:
-            lock = self._parent_locks[account_id]
-        except KeyError as error:
-            raise UnknownCapitalScopeError("parent account is not registered") from error
+        with self._registry_lock:
+            try:
+                lock = self._parent_locks[account_id]
+            except KeyError as error:
+                raise UnknownCapitalScopeError("parent account is not registered") from error
         with lock:
             yield
 
     @contextmanager
     def _scope_locks(self, account_id: AccountId, allocation_id: AllocationId) -> Iterator[None]:
-        try:
-            parent_lock = self._parent_locks[account_id]
-            allocation_lock = self._allocation_locks[allocation_id]
-        except KeyError as error:
-            raise UnknownCapitalScopeError("capital scope is not registered") from error
+        with self._registry_lock:
+            try:
+                parent_lock = self._parent_locks[account_id]
+                allocation_lock = self._allocation_locks[allocation_id]
+            except KeyError as error:
+                raise UnknownCapitalScopeError("capital scope is not registered") from error
         with parent_lock, allocation_lock:
             yield

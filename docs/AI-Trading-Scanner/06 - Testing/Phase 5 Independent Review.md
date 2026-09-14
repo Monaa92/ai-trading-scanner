@@ -1,6 +1,6 @@
 # Phase 5 independent review
 
-Status: **CHANGES REQUIRED ON THREE CANDIDATES; THIRD REMEDIATION RE-REVIEW REQUIRED.** PR #4 reviews of candidates `0c36a5de657e749daa0ef987c47c44d299dd67b7`, `7ea3dc007e212d9f391bb6cc4e9b36139d005322` and `d1da3a07db417071697730b4acabe220755f22bc` all returned CHANGES REQUIRED. No approval is recorded. Review the exact third-remediation PR head identified in the review handoff; do not merge until every finding is resolved and that exact head is independently approved.
+Status: **CHANGES REQUIRED ON FOUR CANDIDATES; FOURTH REMEDIATION RE-REVIEW REQUIRED.** PR #4 reviews of candidates `0c36a5de657e749daa0ef987c47c44d299dd67b7`, `7ea3dc007e212d9f391bb6cc4e9b36139d005322`, `d1da3a07db417071697730b4acabe220755f22bc` and `73a12676224d0fab901af69c8dc43fa65e63f707` all returned CHANGES REQUIRED. No approval is recorded. Review the exact fourth-remediation PR head identified in the review handoff; do not merge until every finding is resolved and that exact head is independently approved.
 
 | Area | Implementation | Behavioral evidence | Intended invariant | Failure impact |
 | --- | --- | --- | --- | --- |
@@ -48,3 +48,13 @@ The third remediation tracks durable allocated capital per parent. Registration 
 ## Candidate verification
 
 The third-remediation workspace passes 434 total tests: 303 Phase 1–4 regressions and 131 focused Phase 5 cases. Ruff lint/format, strict mypy, lock verification, offline build, source health and isolated offline wheel-install health pass. The remaining repository/security/documentation checks and exact remote candidate SHA are recorded in the final review handoff. PR #4 exists, but no approval or merge evidence currently exists.
+
+## Final independent re-review and fourth remediation
+
+The independent review of `73a1267` confirmed parent allocation conservation, sizing provenance v4 and `RiskDecision` relational validation were resolved. It reproduced one remaining concurrency defect: parent and allocation registration stored the primary snapshot before the required lock and related state were atomically visible, allowing a concurrent reader to encounter transient half-publication. The result was **CHANGES REQUIRED**, not approval.
+
+The fourth remediation serializes every public parent/allocation/lock lookup with registration through a short registry-only resolution section. Registration prepares all related entries under the registry lock, writes the primary snapshot last and rolls back all entries if any publication mutation raises. Registry resolution releases before waiting for parent/allocation locks; allocation registration resolves the parent lock before taking parent → registry; reservation remains proposal → registry-only resolution → parent → allocation → registry. Therefore no path holds registry while waiting for a capital-scope lock.
+
+`test_risk_fourth_remediation.py` forces registration to pause both immediately before and immediately after primary-snapshot insertion while eight readers race. Readers remain outside the registry boundary and then receive the complete snapshot; unpublished scopes remain unknown. Injected parent/allocation publication failures leave no lock, evidence, index or capital-accounting residue and allow a valid retry. Existing third-remediation cases continue to cover duplicate registration, concurrent valid allocations, overflow and registration/reservation interaction; the new suite additionally reserves immediately after successful registration.
+
+The fourth-remediation workspace passes 442 total tests: 303 Phase 1–4 regressions and 139 focused Phase 5 cases. Ruff lint/format, strict mypy, lock verification, offline build, source health and isolated offline wheel-install health pass. Security, coupling, documentation and repository checks are recorded in the final review handoff. PR #4 remains unapproved and unmerged.

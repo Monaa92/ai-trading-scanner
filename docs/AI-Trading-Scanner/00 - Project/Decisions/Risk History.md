@@ -57,3 +57,11 @@ Previous contract used a single-account scope. New contract scopes E/cash/limits
 - Lock order: proposal → parent → allocation → registry for reservation publication; allocation registration uses parent → registry. Registry-only lookups release before acquiring proposal or scope locks.
 - Classification: risk-critical corrective candidate. No threshold was loosened, no strategy result was produced and no execution authority was added. Independent competent re-review of the exact third-remediation branch head remains mandatory.
 - Evidence: 15 additional adversarial/concurrency cases bring Phase 5 to 131 focused tests and the repository to 434 tests. See [[06 - Testing/Phase 5 Completion Criteria]] and [[06 - Testing/Phase 5 Independent Review]].
+
+## 2026-09-14 — Phase 5 fourth remediation candidate
+
+- Previous candidate: `73a12676224d0fab901af69c8dc43fa65e63f707`; independent final re-review returned **CHANGES REQUIRED** because public readers could observe a parent/allocation snapshot before its required lock and related registry state were completely published.
+- Change: registry release is now the public registration commit boundary. Public scope resolution obtains stable references in a registry-only section and releases registry before waiting for scope locks. Parent/allocation registration publishes the primary snapshot last and rolls back every related entry after an injected mutation failure.
+- Lock order: parent registration uses registry; allocation registration uses registry-only parent resolution, then parent → registry; reservation uses proposal → registry-only scope resolution → parent → allocation → registry. No path holds registry while waiting for a parent/allocation lock.
+- Classification: risk-critical corrective candidate. Capital/risk thresholds, strategy behavior and execution authority are unchanged. Independent competent re-review of the exact fourth-remediation branch head remains mandatory.
+- Evidence: eight additional deterministic forced-interleaving and rollback cases bring Phase 5 to 139 focused tests and the repository to 442 tests. See [[06 - Testing/Phase 5 Completion Criteria]] and [[06 - Testing/Phase 5 Independent Review]].
