@@ -1,6 +1,6 @@
 # Gated roadmap
 
-Phases 1–4 are complete on `main`. PR #4 candidates `0c36a5d`, `7ea3dc0`, `d1da3a0` and `73a1267` received CHANGES REQUIRED; the fourth-remediation candidate requires independent competent re-review before merge. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
+Phases 1–4 are complete on `main`. PR #4 candidates `0c36a5d`, `7ea3dc0`, `d1da3a0`, `73a1267` and `8023bd8` received CHANGES REQUIRED; the fifth-remediation candidate requires independent competent re-review before merge. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
 
 | Phase | Deliverable | Exit criterion |
 | --- | --- | --- |
@@ -9,7 +9,7 @@ Phases 1–4 are complete on `main`. PR #4 candidates `0c36a5d`, `7ea3dc0`, `d1d
 | 2 | Historical data/calendar/quality — IMPLEMENTED | Immutable canonical records, provenance, available-at semantics, XNYS sessions, quality findings, deterministic dataset identity and audited synthetic fixtures. Provider ingestion, persisted revisions and real datasets remain later work. |
 | 3 | Deterministic indicators — COMPLETE | Exact formulas, seeds/session/gaps, warning lineage, prefix invariance and batch/incremental fixtures pass; independently reviewed, approved and merged in PR #2 (`0cf0497`) |
 | 4 | Strategy and proposal contracts — COMPLETE | Registered unoptimized `BASELINE_RESEARCH_V1` parameters, four independent profiles, first-class NO_TRADE, model/profile independence, agent-scoped pure evaluations and deterministic proposal/management identities; no order submission. Independently reviewed and merged through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`). |
-| 5 | Risk/allocation/safety — FOURTH REMEDIATION CANDIDATE | Decimal sizing against scoped/fresh current loss/headroom; sizing bound to proposal, configuration and evaluated state; exclusive parent allocation ownership; atomic public scope registration; one registered allocation per agent/coordinator context; parent+agent atomic in-memory reservations; proposal-wide uniqueness; expiry-safe replay/lifecycle; relational risk evidence; partitioned scoped locks; conservation and approval-binding behavior implemented; independent re-review remains required |
+| 5 | Risk/allocation/safety — FIFTH REMEDIATION CANDIDATE | Decimal sizing against scoped/fresh current loss/headroom; sizing bound to proposal, configuration and evaluated state; exclusive parent allocation ownership; atomic public scope registration; one registered allocation per agent/coordinator context; exception-atomic parent+agent in-memory reservation/lifecycle publication; proposal-wide uniqueness; expiry-safe replay/lifecycle; relational risk evidence; partitioned scoped locks; conservation and approval-binding behavior implemented; independent re-review remains required |
 | 6 | Backtesting/simulation | Causal SimulationBroker lifecycle, isolated participants, versioned round-trip costs, fixed management, decision/approval replay where valid, audit and core metrics pass |
 | 7 | Historical validation | Registered comparable evidence, rejection/counterfactual separation and failed experiments retained |
 | 7a | Optional management hypotheses | Separately specified/versioned dynamic policy and fixed-baseline comparison before any use |

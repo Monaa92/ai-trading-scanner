@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
 from threading import RLock
+from typing import Any
 
 from ai_trading_scanner.domain import (
     AccountId,
@@ -48,6 +49,27 @@ class UnknownCapitalScopeError(LookupError):
 
 class DuplicateCapitalScopeError(ValueError):
     """Raised when a stable account or allocation identity is registered twice."""
+
+
+class _MutationJournal:
+    """Record dictionary writes before mutation so a failed publication can be undone."""
+
+    def __init__(self) -> None:
+        self._entries: list[tuple[dict[Any, Any], Any, bool, Any]] = []
+
+    def set(self, mapping: dict[Any, Any], key: Any, value: Any) -> None:
+        existed = dict.__contains__(mapping, key)
+        previous = dict.__getitem__(mapping, key) if existed else None
+        self._entries.append((mapping, key, existed, previous))
+        mapping[key] = value
+
+    def rollback(self) -> None:
+        """Restore in reverse order while bypassing failure-injecting dict overrides."""
+        for mapping, key, existed, previous in reversed(self._entries):
+            if existed:
+                dict.__setitem__(mapping, key, previous)
+            elif dict.__contains__(mapping, key):
+                dict.__delitem__(mapping, key)
 
 
 class InMemoryCapitalCoordinator:
@@ -411,18 +433,36 @@ class InMemoryCapitalCoordinator:
                 }
             )
 
-            self._parents[account_id] = new_parent
-            self._allocations[allocation_id] = new_allocation
-            self._reservations_by_account[account_id][reservation.reservation_id] = reservation
-            with self._registry_lock:
-                self._reservations[reservation.reservation_id] = reservation
-                self._risk_decisions[reservation.reservation_id] = final_decision
-                self._proposal_reservations[proposal.proposal_id] = reservation.reservation_id
-            return ReservationAttempt(
+            attempt = ReservationAttempt(
                 status=ReservationAttemptStatus.RESERVED,
                 risk_decision=final_decision,
                 reservation=reservation,
             )
+            with self._registry_lock:
+                publication = _MutationJournal()
+                try:
+                    publication.set(self._parents, account_id, new_parent)
+                    publication.set(self._allocations, allocation_id, new_allocation)
+                    publication.set(
+                        self._reservations_by_account[account_id],
+                        reservation.reservation_id,
+                        reservation,
+                    )
+                    publication.set(self._reservations, reservation.reservation_id, reservation)
+                    publication.set(
+                        self._risk_decisions,
+                        reservation.reservation_id,
+                        final_decision,
+                    )
+                    publication.set(
+                        self._proposal_reservations,
+                        proposal.proposal_id,
+                        reservation.reservation_id,
+                    )
+                except BaseException:
+                    publication.rollback()
+                    raise
+            return attempt
 
     def release(
         self,
@@ -587,11 +627,20 @@ class InMemoryCapitalCoordinator:
             {**allocation.model_dump(mode="python"), **allocation_update}
         )
 
-        self._parents[account_id] = new_parent
-        self._allocations[allocation_id] = new_allocation
-        self._reservations_by_account[account_id][current.reservation_id] = transitioned
         with self._registry_lock:
-            self._reservations[current.reservation_id] = transitioned
+            publication = _MutationJournal()
+            try:
+                publication.set(self._parents, account_id, new_parent)
+                publication.set(self._allocations, allocation_id, new_allocation)
+                publication.set(
+                    self._reservations_by_account[account_id],
+                    current.reservation_id,
+                    transitioned,
+                )
+                publication.set(self._reservations, current.reservation_id, transitioned)
+            except BaseException:
+                publication.rollback()
+                raise
         return transitioned
 
     def _preliminary_mismatch_reasons(
