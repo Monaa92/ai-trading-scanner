@@ -1,6 +1,6 @@
 # Backend architecture
 
-Status: mostly design specification. Phase 1 implements domain identities, execution dimensions, configuration validation and local health boundaries. Phase 2 implements the offline historical `market_data` models, XNYS calendar, provenance/content identity, quality validation, fixtures and causal reader. Parent: [[01 - Architecture/System Architecture]]. Other proposed module names remain documentation, not created packages.
+Status: mostly design specification. Phases 1–3 implement the offline configuration, historical-data and deterministic-indicator foundations. The Phase 4 review candidate implements the pure Strategy boundary and immutable decision/proposal contracts in `strategies`; risk, portfolio, execution, broker and persistence boundaries remain specifications. Parent: [[01 - Architecture/System Architecture]].
 
 ## Ownership and dependency direction
 
@@ -37,7 +37,7 @@ No strategy→broker, strategy→market-data provider, indicator→LLM, domain�
 | MarketDataProvider | subscribe(instruments, channels, resume token if supported) → raw market/status/revision envelopes; gaps explicitly reported |
 | AvailableData | snapshot(as_of, instrument, requirements) → only records with availability ≤ as_of, plus missing/quality flags |
 | IndicatorEngine | evaluate(ordered bars, implementation version, state) → values, ready flags, dependency IDs, next state |
-| StrategyEngine | evaluate(feature snapshot, immutable parameters) → pass/reject, rule results, proposed entry/stop/target, score components |
+| StrategyEngine | `evaluate(StrategyEvaluationContext, immutable configuration) → NO_TRADE | TRADE_PROPOSAL`; implemented as a pure Phase 4 boundary with structured evidence and no side effects |
 | RiskEngine | assess(proposal, account, quote, FX, limits, capabilities, time) → reject or bounded quantity, modeled loss/cost, expiry and snapshot IDs |
 | BrokerPort | capabilities/account/orders/fills/positions; submit(intent, stable client ID); cancel(order ID); lookup(client ID) → typed result/event |
 | AIProvider | evaluate(allowlisted context, frozen model/prompt/schema config, deadline) → untrusted structured response envelope |

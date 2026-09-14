@@ -77,3 +77,19 @@ class DatasetId(Identifier):
 
 class IndicatorConfigurationId(Identifier):
     """Content-derived identity of an immutable indicator configuration."""
+
+
+class StrategyConfigurationId(Identifier):
+    """Content-derived identity of immutable strategy parameters."""
+
+
+class StrategyDecisionId(Identifier):
+    """Content-derived identity of one deterministic strategy decision."""
+
+
+class TradeProposalId(Identifier):
+    """Content-derived identity of immutable approval-sensitive trade intent."""
+
+
+class ManagementMandateId(Identifier):
+    """Content-derived identity of an immutable management mandate."""

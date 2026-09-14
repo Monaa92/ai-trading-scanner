@@ -1,6 +1,21 @@
 # Strategy changelog
 
-Append-only research history. See [[02 - Agents & Strategies/Strategy Versioning]] and [[03 - Experiments/Experiment Framework]]. No backtester exists and no strategy evaluation has been performed.
+Append-only research history. See [[02 - Agents & Strategies/Strategy Versioning]] and [[03 - Experiments/Experiment Framework]]. No backtester exists and no market experiment or performance evaluation has been performed; Phase 4 synthetic contract fixtures are behavioral tests only.
+
+## 2026-09-14 — four-profile BASELINE_RESEARCH_V1 implementation
+
+| Field | Record |
+| --- | --- |
+| Hypothesis | Four deterministic strategy families can produce auditable, causally invariant proposal/non-trade contracts from equal information; profitability remains untested |
+| Exact change | Registered explicit Momentum, Mean Reversion, Breakout and Multi-Factor configurations and pure evaluators; added structured NO_TRADE, management mandate, expected-economics and approval-sensitive proposal identity contracts |
+| Previous version/configuration | Agent A `v0.1.0` specification with unset parameters; Agents B–D profile descriptions only; no accepted predecessor |
+| New configuration | `BASELINE_RESEARCH_V1` / `0.1.0`; exact parameters in [[02 - Agents & Strategies/Experiment 1 Strategy Profiles]] and content-derived configuration IDs at runtime |
+| Evaluation period / dataset version | NOT RUN / no market dataset; deterministic synthetic branch fixtures only |
+| Execution/cost/risk model | Externally supplied test-only normalized round-trip estimate; no broker cost engine, Risk Engine or execution model |
+| Previous / new metrics / delta | Unavailable / unavailable / not applicable |
+| Result / decision | Contract behavior locally verified / EXPERIMENTAL; independent review pending |
+| Relevant commit / PR | Exact review candidate commit is recorded in the final handoff after creation; no PR created or asserted here |
+| Notes | Defaults are uncalibrated, not optimized against fixtures and do not authorize trading |
 
 ## 2026-09-13 — v0.1.0 specification baseline
 

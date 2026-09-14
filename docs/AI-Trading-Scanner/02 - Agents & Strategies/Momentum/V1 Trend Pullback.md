@@ -1,6 +1,6 @@
 # V1 trend pullback
 
-Status: proposed research baseline `v0.1.0`, EXPERIMENTAL, not executable until its parameter manifest is complete. No optimized thresholds or accepted trading version exist. See [[02 - Agents & Strategies/Shared Agent Rules/Indicators]] and [[01 - Architecture/Portfolio Accounting/Position Sizing]].
+Status: implemented research baseline `BASELINE_RESEARCH_V1` / `0.1.0` on the Phase 4 review branch; EXPERIMENTAL and not validated. The registered implementation uses p=5, b=0.25 ATR, k=20, one completed-bar confirmation, RSI 50–80, minimum expected net return 0.001 and maximum input age 60 seconds. These are development defaults requiring empirical calibration, not optimized settings. See [[02 - Agents & Strategies/Shared Agent Rules/Indicators]] and [[01 - Architecture/Portfolio Accounting/Position Sizing]].
 
 ## A. Mandatory deterministic strategy conditions
 
@@ -22,7 +22,7 @@ Record normalized distance to VWAP/EMAs, EMA slopes, depth/duration of pullback,
 
 ## C. Research parameters and ablations
 
-Required before baseline run: p, ATR period, b, k, same-slot RVOL N when used, and execution/quote model. RSI/RVOL/volatility thresholds and multi-timeframe trend filters are disabled until separate hypotheses register direction, value/range, justification and trial budget. Do not run a filter with an invented default. Development searches must be small, recorded and separated from validation/holdout. Testing continuous EMA state is a separate hypothesis, motivated in advance by the late-session warm-up constraint.
+Phase 4 registers p=5, ATR period 14, b=0.25 and k=20 so the contract is executable. Entry is the completed trigger-bar close and the externally supplied cost estimate is a normalized research input; neither is a broker quote or fill model. RVOL and multi-timeframe filters remain disabled. Development searches must be small, recorded and separated from validation/holdout. Testing continuous EMA state is a separate hypothesis, motivated in advance by the late-session warm-up constraint.
 
 ## D. Rejections
 

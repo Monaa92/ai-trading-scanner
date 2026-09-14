@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -12,6 +10,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ai_trading_scanner.domain import DatasetId, IndicatorConfigurationId, InstrumentId
+from ai_trading_scanner.domain.content_identity import sha256_content_id
 from ai_trading_scanner.market_data import QualityFinding, Timeframe
 
 PositivePeriod = Annotated[int, Field(strict=True, gt=0)]
@@ -90,9 +89,7 @@ IndicatorConfiguration = EMAConfig | RSIConfig | ATRConfig | VWAPConfig
 def calculate_indicator_configuration_id(
     configuration: IndicatorConfiguration,
 ) -> IndicatorConfigurationId:
-    payload = configuration.model_dump(mode="json")
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return IndicatorConfigurationId.parse(f"sha256:{hashlib.sha256(encoded).hexdigest()}")
+    return IndicatorConfigurationId.parse(sha256_content_id(configuration))
 
 
 class IndicatorPoint(BaseModel):

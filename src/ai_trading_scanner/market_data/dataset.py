@@ -3,34 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
-from enum import Enum
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from ai_trading_scanner.domain import DatasetId, InstrumentId
+from ai_trading_scanner.domain.content_identity import canonical_json_bytes, sha256_content_id
 from ai_trading_scanner.market_data.models import DataProvenance, HistoricalBar, QualityStatus
 from ai_trading_scanner.market_data.quality import DatasetValidator, QualityCode, QualityFinding
-
-
-def _canonical(value: Any) -> Any:
-    if isinstance(value, BaseModel):
-        return _canonical(value.model_dump(mode="python", exclude_none=False))
-    if isinstance(value, dict):
-        return {str(key): _canonical(item) for key, item in sorted(value.items())}
-    if isinstance(value, tuple | list):
-        return [_canonical(item) for item in value]
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
-    if isinstance(value, Decimal):
-        return format(value, "f")
-    if isinstance(value, Enum):
-        return value.value
-    return value
 
 
 def calculate_dataset_id(provenance: DataProvenance, bars: Iterable[HistoricalBar]) -> DatasetId:
@@ -39,8 +20,7 @@ def calculate_dataset_id(provenance: DataProvenance, bars: Iterable[HistoricalBa
         key=lambda bar: (str(bar.instrument_id), bar.start_at, bar.timeframe.value),
     )
     payload = {"provenance": provenance, "bars": ordered_bars}
-    encoded = json.dumps(_canonical(payload), sort_keys=True, separators=(",", ":")).encode()
-    return DatasetId.parse(f"sha256:{hashlib.sha256(encoded).hexdigest()}")
+    return DatasetId.parse(sha256_content_id(payload))
 
 
 class CanonicalDataset(BaseModel):
@@ -140,7 +120,7 @@ class CausalBarReader:
             if bar.available_at <= as_of
             and (instrument_ids is None or bar.instrument_id in instrument_ids)
         )
-        encoded = json.dumps(_canonical(bars), sort_keys=True, separators=(",", ":")).encode()
+        encoded = canonical_json_bytes(bars)
         visible_findings = tuple(
             finding
             for finding in self._quality_findings
