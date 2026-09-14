@@ -2,12 +2,12 @@
 
 Private research project investigating a systematic AI-assisted intraday scanner through deterministic rules, risk controls, realistic backtesting and eventual paper validation. Profitability is unproven; negative results are retained.
 
-Current state: Phases 1–4 are complete on `main`. PR #4 candidates `0c36a5d` and `7ea3dc0`
-received CHANGES REQUIRED. The second Phase 5 remediation candidate adds deterministic Decimal
-risk sizing, one registered allocation per agent per coordinator, attributed/fresh loss evidence,
-strong proposal/configuration sizing provenance, atomic in-memory reservations and scoped safety
-locks. It remains subject to independent risk-critical re-review. Research baselines remain
-unvalidated. No scanner, portfolio P&L, broker, AI, order submission or execution exists.
+Current state: Phases 1–4 are complete on `main`. PR #4 candidates `0c36a5d`, `7ea3dc0` and
+`d1da3a0` received CHANGES REQUIRED. The third Phase 5 remediation candidate adds deterministic
+Decimal risk sizing bound to complete source state, exclusive parent allocation ownership,
+relationally validated risk evidence, atomic in-memory reservations and scoped safety locks. It
+remains subject to independent risk-critical re-review. Research baselines remain unvalidated. No
+scanner, portfolio P&L, broker, AI, order submission or execution exists.
 
 - [Project rules](docs/PROJECT_RULES.md) — authoritative governance.
 - [Agent instructions](AGENTS.md) — required entry point for future agents.

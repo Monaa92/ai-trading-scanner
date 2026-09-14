@@ -401,7 +401,10 @@ def test_active_lock_blocks_new_reservation_without_destroying_existing() -> Non
 def test_failed_final_revalidation_leaves_both_scopes_unchanged() -> None:
     proposal = trade_proposal(final_quantity=Decimal("0.7"))
     configured = risk_policy()
-    store = coordinator(parent=parent_snapshot("50"))
+    store = coordinator(
+        parent=parent_snapshot("50"),
+        allocations=(allocation_snapshot(capital="50"),),
+    )
     stale_state = state()
     preliminary = RiskEngine().evaluate(
         proposal, configured, stale_state, evaluated_at=proposal.as_of
@@ -443,7 +446,7 @@ def test_reservation_identity_binds_material_contract_and_survives_lifecycle_sta
 def test_allocation_lock_is_local_while_parent_lock_propagates() -> None:
     allocation_a = allocation_snapshot(agent="agent:A", allocation="allocation:A")
     allocation_b = allocation_snapshot(agent="agent:B", allocation="allocation:B")
-    store = coordinator(allocations=(allocation_a, allocation_b))
+    store = coordinator(parent=parent_snapshot("200"), allocations=(allocation_a, allocation_b))
     local_lock = create_safety_lock(
         scope=SafetyLockScope.AGENT,
         reason=SafetyLockReason.TRADING_LOCK,

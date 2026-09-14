@@ -39,7 +39,7 @@ No strategy→broker, strategy→market-data provider, indicator→LLM, domain�
 | IndicatorEngine | evaluate(ordered bars, implementation version, state) → values, ready flags, dependency IDs, next state |
 | StrategyEngine | `evaluate(StrategyEvaluationContext, immutable configuration) → NO_TRADE | TRADE_PROPOSAL`; implemented as a pure Phase 4 boundary with structured evidence and no side effects |
 | RiskEngine | Phase 5 implemented subset: evaluate immutable proposal + parent/allocation/safety snapshots + versioned limits + explicit time → typed rejection or bounded quantity; no order authority |
-| AllocationCoordinator | Phase 5 in-memory implementation: parent→allocation scoped locks, fresh risk/approval checks, all-or-none reservation and idempotent terminal lifecycle; durable transaction port remains future |
+| AllocationCoordinator | Phase 5 in-memory implementation: parent-locked exclusive allocation registration, proposal→parent→allocation scoped reservation locks, fresh risk/approval checks, all-or-none reservation and idempotent terminal lifecycle; durable transaction port remains future |
 | BrokerPort | capabilities/account/orders/fills/positions; submit(intent, stable client ID); cancel(order ID); lookup(client ID) → typed result/event |
 | AIProvider | evaluate(allowlisted context, frozen model/prompt/schema config, deadline) → untrusted structured response envelope |
 | UnitOfWork | atomically persist decision, reservation, intent, audit and outbox using expected account revision → commit/retry conflict |

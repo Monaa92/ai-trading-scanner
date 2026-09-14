@@ -47,3 +47,13 @@ Previous contract used a single-account scope. New contract scopes E/cash/limits
 - Lock order: reservation remains proposal guard → parent → allocation. Agent uniqueness registration uses the registry lock without introducing a nested agent lock. Parent/allocation conservation and previously corrected headroom, duplicate, expiry and lock behavior remain unchanged.
 - Classification: risk-critical corrective candidate. No threshold was loosened, no strategy result was produced and no execution authority was added. Independent competent re-review of the exact second-remediation commit remains mandatory.
 - Evidence: 21 additional adversarial cases bring Phase 5 to 116 focused tests and the repository to 419 tests; final verification passed. See [[06 - Testing/Phase 5 Completion Criteria]] and [[06 - Testing/Phase 5 Independent Review]].
+
+## 2026-09-14 — Phase 5 third review remediation
+
+- Review evidence: final independent re-review of PR #4 candidate `d1da3a07db417071697730b4acabe220755f22bc` returned **CHANGES REQUIRED**. Earlier candidates `0c36a5d` and `7ea3dc0` also remain rejected; no approval or merge is recorded.
+- Parent ownership: registration now atomically enforces aggregate durable allocation capital at or below parent total capital under parent → registry locking. Currency and loss evidence validate before publication. Reservation release, expiry and consumption do not return allocation ownership; no retirement API exists.
+- Sizing provenance: `SizingDecision` schema v4 binds proposal, configuration and complete evaluated state, then deterministically re-derives the future-risk quantity, exact-quantity intent and every financial result. Recomputed content IDs cannot legitimize caller-selected derived values.
+- Decision evidence: `RiskDecision` schema v4 binds source proposal/configuration/evaluation state for both approved and rejected outcomes and checks derived limits, exact safety evidence, sizing attribution, ownership/configuration/currency reasons and causal safety reasons.
+- Lock order: proposal → parent → allocation → registry for reservation publication; allocation registration uses parent → registry. Registry-only lookups release before acquiring proposal or scope locks.
+- Classification: risk-critical corrective candidate. No threshold was loosened, no strategy result was produced and no execution authority was added. Independent competent re-review of the exact third-remediation branch head remains mandatory.
+- Evidence: 15 additional adversarial/concurrency cases bring Phase 5 to 131 focused tests and the repository to 434 tests. See [[06 - Testing/Phase 5 Completion Criteria]] and [[06 - Testing/Phase 5 Independent Review]].

@@ -51,7 +51,7 @@ class DuplicateCapitalScopeError(ValueError):
 
 
 class InMemoryCapitalCoordinator:
-    """Local transactional boundary with deterministic parent→allocation lock order."""
+    """Local boundary with proposal→parent→allocation→registry nested lock order."""
 
     def __init__(self, risk_engine: RiskEngine | None = None) -> None:
         self._risk_engine = risk_engine or RiskEngine()
@@ -60,6 +60,7 @@ class InMemoryCapitalCoordinator:
         self._parents: dict[AccountId, ParentCapitalSnapshot] = {}
         self._allocations: dict[AllocationId, AllocationSnapshot] = {}
         self._allocation_by_agent: dict[AgentId, AllocationId] = {}
+        self._allocated_capital_by_account: dict[AccountId, Decimal] = {}
         self._parent_loss_states: dict[AccountId, LossStateSnapshot] = {}
         self._allocation_loss_states: dict[AllocationId, LossStateSnapshot] = {}
         self._parent_locks: dict[AccountId, RLock] = {}
@@ -78,6 +79,7 @@ class InMemoryCapitalCoordinator:
                 raise DuplicateCapitalScopeError("parent account is already registered")
             self._validate_parent_loss_state(snapshot.account_id, loss_state)
             self._parents[snapshot.account_id] = snapshot
+            self._allocated_capital_by_account[snapshot.account_id] = Decimal(0)
             self._parent_loss_states[snapshot.account_id] = loss_state
             self._parent_locks[snapshot.account_id] = RLock()
             self._reservations_by_account[snapshot.account_id] = {}
@@ -86,18 +88,29 @@ class InMemoryCapitalCoordinator:
     def register_allocation(
         self, snapshot: AllocationSnapshot, loss_state: LossStateSnapshot
     ) -> None:
-        with self._registry_lock:
-            if snapshot.account_id not in self._parents:
-                raise UnknownCapitalScopeError("parent account is not registered")
+        try:
+            parent_lock = self._parent_locks[snapshot.account_id]
+        except KeyError as error:
+            raise UnknownCapitalScopeError("parent account is not registered") from error
+        with parent_lock, self._registry_lock:
+            parent = self._parent(snapshot.account_id)
             if snapshot.allocation_id in self._allocations:
                 raise DuplicateCapitalScopeError("allocation is already registered")
             if snapshot.agent_id in self._allocation_by_agent:
                 raise DuplicateCapitalScopeError(
                     "agent already has an active allocation in this coordinator context"
                 )
+            if snapshot.currency != parent.currency:
+                raise ReservationTransitionError("allocation currency differs from parent account")
+            allocated = self._allocated_capital_by_account[snapshot.account_id]
+            if allocated + snapshot.allocated_capital > parent.total_capital:
+                raise ReservationTransitionError("allocation exceeds unassigned parent capital")
             self._validate_allocation_loss_state(snapshot, loss_state)
             self._allocations[snapshot.allocation_id] = snapshot
             self._allocation_by_agent[snapshot.agent_id] = snapshot.allocation_id
+            self._allocated_capital_by_account[snapshot.account_id] = (
+                allocated + snapshot.allocated_capital
+            )
             self._allocation_loss_states[snapshot.allocation_id] = loss_state
             self._allocation_locks[snapshot.allocation_id] = RLock()
 
@@ -262,7 +275,11 @@ class InMemoryCapitalCoordinator:
                             status=ReservationAttemptStatus.REJECTED,
                             risk_decision=rejected,
                         )
+                    with self._registry_lock:
+                        original_decision = self._risk_decisions[existing.reservation_id]
                     replay_state = self._evaluation_state_excluding(existing)
+                    if replay_state == original_decision.source_evaluation_state:
+                        replay_state = original_decision.source_evaluation_state
                     replay_decision = self._risk_engine.evaluate_for_reservation(
                         proposal,
                         configuration,
@@ -270,8 +287,6 @@ class InMemoryCapitalCoordinator:
                         evaluated_at=evaluated_at,
                         approval_binding=approval_binding,
                     )
-                    with self._registry_lock:
-                        original_decision = self._risk_decisions[existing.reservation_id]
                     if replay_decision.status is RiskDecisionStatus.REJECTED:
                         return ReservationAttempt(
                             status=ReservationAttemptStatus.REJECTED,
@@ -594,6 +609,7 @@ class InMemoryCapitalCoordinator:
                 **parent.model_dump(mode="python"),
                 "available_capital": parent.available_capital + amount,
                 "active_reserved_capital": parent.active_reserved_capital - amount,
+                "revision": parent.revision - 1,
             }
         )
         adjusted_allocation = AllocationSnapshot.model_validate(
@@ -602,6 +618,7 @@ class InMemoryCapitalCoordinator:
                 "available_capital": allocation.available_capital + amount,
                 "active_reserved_capital": allocation.active_reserved_capital - amount,
                 "active_reservation_count": allocation.active_reservation_count - 1,
+                "revision": allocation.revision - 1,
             }
         )
         return RiskEvaluationState(

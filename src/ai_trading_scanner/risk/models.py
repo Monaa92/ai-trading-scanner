@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from decimal import Context, Decimal, localcontext
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from decimal import ROUND_FLOOR, Context, Decimal, localcontext
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
@@ -32,7 +33,7 @@ from ai_trading_scanner.domain.execution import (
     ExecutionDimensions,
     ExecutionEnvironment,
 )
-from ai_trading_scanner.strategies import SizingMethod, TradeProposal
+from ai_trading_scanner.strategies import ProposalSide, SizingMethod, TradeProposal
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -553,15 +554,144 @@ class RiskEvaluationState(BaseModel):
         return self
 
 
+@dataclass(frozen=True, slots=True)
+class _SizingDerivation:
+    unit_risk: Decimal
+    round_trip_cost_return: Decimal
+    unit_modeled_loss: Decimal
+    agent_daily_loss_ceiling: Decimal
+    parent_daily_loss_ceiling: Decimal
+    agent_remaining_loss_headroom: Decimal
+    parent_remaining_loss_headroom: Decimal
+    allowed_risk_amount: Decimal
+    cash_per_unit: Decimal
+    position_headroom: Decimal
+    agent_headroom: Decimal
+    parent_headroom: Decimal
+    instrument_headroom: Decimal
+    available_capital: Decimal
+    raw_quantity: Decimal
+    quantity: Decimal
+    modeled_risk_amount: Decimal
+    reservation_amount: Decimal
+
+
+def _loss_capacity(
+    configuration: RiskConfiguration,
+    state: RiskEvaluationState,
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    agent = state.safety.agent_loss_state
+    parent = state.safety.parent_loss_state
+    with localcontext(_DECIMAL_CONTEXT):
+        agent_ceiling = configuration.max_agent_drawdown_fraction * min(
+            agent.session_start_equity, agent.eligible_current_equity
+        )
+        parent_ceiling = configuration.max_parent_drawdown_fraction * min(
+            parent.session_start_equity, parent.eligible_current_equity
+        )
+        agent_remaining = max(
+            Decimal(0),
+            agent_ceiling - agent.current_loss - state.safety.agent_outstanding_downside,
+        )
+        parent_remaining = max(
+            Decimal(0),
+            parent_ceiling - parent.current_loss - state.safety.parent_outstanding_downside,
+        )
+    return agent_ceiling, parent_ceiling, agent_remaining, parent_remaining
+
+
+def _derive_sizing(
+    proposal: TradeProposal,
+    configuration: RiskConfiguration,
+    state: RiskEvaluationState,
+) -> _SizingDerivation:
+    allocation = state.allocation
+    parent = state.parent
+    entry = proposal.entry.reference_price
+    stop = proposal.stop_level
+    with localcontext(_DECIMAL_CONTEXT):
+        unit_risk = entry - stop
+        if unit_risk <= 0:
+            raise ValueError("long stop must remain below entry")
+        cost_return = proposal.economics.cost_estimate.total_return_drag
+        unit_modeled_loss = unit_risk + entry * cost_return
+        agent_ceiling, parent_ceiling, agent_remaining, parent_remaining = _loss_capacity(
+            configuration, state
+        )
+        risk_budget = (
+            state.safety.agent_loss_state.eligible_current_equity * configuration.max_risk_fraction
+        )
+        if configuration.max_monetary_risk is not None:
+            risk_budget = min(risk_budget, configuration.max_monetary_risk)
+        risk_budget = min(risk_budget, agent_remaining, parent_remaining)
+        cash_per_unit = entry * (Decimal(1) + cost_return)
+        position_headroom = allocation.allocated_capital * configuration.max_position_fraction
+        agent_headroom = (
+            allocation.allocated_capital * configuration.max_agent_exposure_fraction
+            - allocation.active_reserved_capital
+            - allocation.committed_capital
+        )
+        parent_headroom = (
+            parent.total_capital * configuration.max_parent_exposure_fraction
+            - parent.active_reserved_capital
+            - parent.committed_capital
+        )
+        instrument_headroom = (
+            allocation.allocated_capital * configuration.max_instrument_exposure_fraction
+            - allocation.instrument_committed_capital
+            - allocation.active_reserved_capital
+        )
+        available = min(allocation.available_capital, parent.available_capital)
+        raw_quantity = min(
+            risk_budget / unit_modeled_loss,
+            available / cash_per_unit,
+            position_headroom / cash_per_unit,
+            max(agent_headroom, Decimal(0)) / cash_per_unit,
+            max(parent_headroom, Decimal(0)) / cash_per_unit,
+            max(instrument_headroom, Decimal(0)) / cash_per_unit,
+        )
+        if proposal.sizing.method is SizingMethod.FINAL_QUANTITY:
+            assert proposal.sizing.final_quantity is not None
+            quantity = proposal.sizing.final_quantity
+        else:
+            units = (raw_quantity / configuration.quantity_increment).to_integral_value(
+                rounding=ROUND_FLOOR
+            )
+            quantity = units * configuration.quantity_increment
+        modeled_risk = quantity * unit_modeled_loss
+        reservation_amount = quantity * cash_per_unit
+    return _SizingDerivation(
+        unit_risk=unit_risk,
+        round_trip_cost_return=cost_return,
+        unit_modeled_loss=unit_modeled_loss,
+        agent_daily_loss_ceiling=agent_ceiling,
+        parent_daily_loss_ceiling=parent_ceiling,
+        agent_remaining_loss_headroom=agent_remaining,
+        parent_remaining_loss_headroom=parent_remaining,
+        allowed_risk_amount=risk_budget,
+        cash_per_unit=cash_per_unit,
+        position_headroom=position_headroom,
+        agent_headroom=agent_headroom,
+        parent_headroom=parent_headroom,
+        instrument_headroom=instrument_headroom,
+        available_capital=available,
+        raw_quantity=raw_quantity,
+        quantity=quantity,
+        modeled_risk_amount=modeled_risk,
+        reservation_amount=reservation_amount,
+    )
+
+
 class SizingDecision(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     sizing_decision_id: SizingDecisionId
-    schema_version: Literal["sizing-decision-v3"] = "sizing-decision-v3"
+    schema_version: Literal["sizing-decision-v4"] = "sizing-decision-v4"
     proposal_id: TradeProposalId
     risk_configuration_id: RiskConfigurationId
     source_proposal: TradeProposal
     source_risk_configuration: RiskConfiguration
+    source_evaluation_state: RiskEvaluationState
     account_id: AccountId
     allocation_id: AllocationId
     agent_id: AgentId
@@ -604,12 +734,32 @@ class SizingDecision(BaseModel):
     def validate_sizing(self) -> Self:
         proposal = self.source_proposal
         configuration = self.source_risk_configuration
+        state = self.source_evaluation_state
         if proposal.proposal_id != self.proposal_id:
             raise ValueError("sizing source proposal does not match proposal identity")
         if configuration.risk_configuration_id != self.risk_configuration_id:
             raise ValueError("sizing source configuration does not match configuration identity")
         if proposal.agent_id != self.agent_id:
             raise ValueError("sizing source proposal does not match agent attribution")
+        if (
+            state.parent.account_id != self.account_id
+            or state.allocation.account_id != self.account_id
+            or state.allocation.allocation_id != self.allocation_id
+            or state.allocation.agent_id != self.agent_id
+        ):
+            raise ValueError("sizing source state does not match ownership attribution")
+        if (
+            proposal.authority_context.configuration_version_id
+            != configuration.authority_configuration_version_id
+            or state.allocation.configuration_version_id
+            != configuration.authority_configuration_version_id
+        ):
+            raise ValueError("sizing source authority differs from risk configuration")
+        if (
+            proposal.entry.currency != state.parent.currency
+            or proposal.entry.currency != state.allocation.currency
+        ):
+            raise ValueError("sizing source currencies are inconsistent")
         if (
             self.entry_price != proposal.entry.reference_price
             or self.stop_price != proposal.stop_level
@@ -624,6 +774,18 @@ class SizingDecision(BaseModel):
             and self.quantity != proposal.sizing.final_quantity
         ):
             raise ValueError("sizing quantity does not match immutable final-quantity intent")
+        derived = _derive_sizing(proposal, configuration, state)
+        if (
+            self.quantity != derived.quantity
+            or self.unit_risk != derived.unit_risk
+            or self.round_trip_cost_return != derived.round_trip_cost_return
+            or self.unit_modeled_loss != derived.unit_modeled_loss
+            or self.cash_per_unit != derived.cash_per_unit
+            or self.allowed_risk_amount != derived.allowed_risk_amount
+            or self.modeled_risk_amount != derived.modeled_risk_amount
+            or self.reservation_amount != derived.reservation_amount
+        ):
+            raise ValueError("sizing values are not the deterministic result of bound inputs")
         with localcontext(_DECIMAL_CONTEXT):
             if self.quantity % self.quantity_increment != 0:
                 raise ValueError("quantity must align to quantity increment")
@@ -645,6 +807,8 @@ class SizingDecision(BaseModel):
                 raise ValueError("reservation amount is arithmetically inconsistent")
             if self.modeled_risk_amount > self.allowed_risk_amount:
                 raise ValueError("modeled risk exceeds allowed risk")
+            if self.quantity > derived.raw_quantity:
+                raise ValueError("quantity exceeds deterministic capacity")
         if self.sizing_decision_id != calculate_sizing_decision_id(self):
             raise ValueError("sizing decision identity does not match content")
         return self
@@ -728,11 +892,43 @@ class RiskEvaluatedLimits(BaseModel):
         return data
 
 
+def _derive_evaluated_limits(
+    configuration: RiskConfiguration,
+    state: RiskEvaluationState,
+) -> RiskEvaluatedLimits:
+    agent_ceiling, parent_ceiling, agent_remaining, parent_remaining = _loss_capacity(
+        configuration, state
+    )
+    return RiskEvaluatedLimits(
+        parent_revision=state.parent.revision,
+        allocation_revision=state.allocation.revision,
+        parent_available_capital=state.parent.available_capital,
+        allocation_available_capital=state.allocation.available_capital,
+        parent_committed_and_reserved=(
+            state.parent.committed_capital + state.parent.active_reserved_capital
+        ),
+        allocation_committed_and_reserved=(
+            state.allocation.committed_capital + state.allocation.active_reserved_capital
+        ),
+        active_reservation_count=state.allocation.active_reservation_count,
+        agent_eligible_current_equity=state.safety.agent_loss_state.eligible_current_equity,
+        parent_eligible_current_equity=state.safety.parent_loss_state.eligible_current_equity,
+        agent_daily_loss_ceiling=agent_ceiling,
+        parent_daily_loss_ceiling=parent_ceiling,
+        agent_current_loss=state.safety.agent_loss_state.current_loss,
+        parent_current_loss=state.safety.parent_loss_state.current_loss,
+        agent_outstanding_downside=state.safety.agent_outstanding_downside,
+        parent_outstanding_downside=state.safety.parent_outstanding_downside,
+        agent_remaining_loss_headroom=agent_remaining,
+        parent_remaining_loss_headroom=parent_remaining,
+    )
+
+
 class RiskDecision(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     risk_decision_id: RiskDecisionId
-    schema_version: Literal["risk-decision-v3"] = "risk-decision-v3"
+    schema_version: Literal["risk-decision-v4"] = "risk-decision-v4"
     status: RiskDecisionStatus
     reason_codes: tuple[RiskRejectionCode, ...]
     proposal_id: TradeProposalId
@@ -740,6 +936,9 @@ class RiskDecision(BaseModel):
     account_id: AccountId
     allocation_id: AllocationId
     risk_configuration_id: RiskConfigurationId
+    source_proposal: TradeProposal
+    source_risk_configuration: RiskConfiguration
+    source_evaluation_state: RiskEvaluationState
     evaluated_at: datetime
     evaluated_limits: RiskEvaluatedLimits
     evaluated_safety_state: SafetyStateSnapshot
@@ -752,6 +951,9 @@ class RiskDecision(BaseModel):
 
     @model_validator(mode="after")
     def validate_decision(self) -> Self:
+        proposal = self.source_proposal
+        configuration = self.source_risk_configuration
+        state = self.source_evaluation_state
         ordered = tuple(sorted(set(self.reason_codes), key=lambda item: item.value))
         if ordered != self.reason_codes:
             raise ValueError("risk rejection codes must be unique and canonical")
@@ -760,12 +962,28 @@ class RiskDecision(BaseModel):
                 raise ValueError("approved risk decision requires sizing and no rejection codes")
         elif not self.reason_codes or self.sizing_decision is not None:
             raise ValueError("rejected risk decision requires reasons and no sizing")
+        if (
+            proposal.proposal_id != self.proposal_id
+            or configuration.risk_configuration_id != self.risk_configuration_id
+            or state.parent.account_id != self.account_id
+            or state.allocation.account_id != self.account_id
+            or state.allocation.allocation_id != self.allocation_id
+            or state.allocation.agent_id != self.agent_id
+        ):
+            raise ValueError("risk decision source attribution is inconsistent")
+        if self.evaluated_safety_state != state.safety:
+            raise ValueError("risk decision safety evidence differs from bound source state")
+        if self.evaluated_limits != _derive_evaluated_limits(configuration, state):
+            raise ValueError("evaluated limits are not derived from bound source state")
         if self.sizing_decision is not None and (
             self.sizing_decision.proposal_id != self.proposal_id
             or self.sizing_decision.agent_id != self.agent_id
             or self.sizing_decision.account_id != self.account_id
             or self.sizing_decision.allocation_id != self.allocation_id
             or self.sizing_decision.risk_configuration_id != self.risk_configuration_id
+            or self.sizing_decision.source_proposal != proposal
+            or self.sizing_decision.source_risk_configuration != configuration
+            or self.sizing_decision.source_evaluation_state != state
         ):
             raise ValueError("sizing decision attribution differs from risk decision")
         limits = self.evaluated_limits
@@ -834,6 +1052,101 @@ class RiskDecision(BaseModel):
                 )
             if self.sizing_decision.allowed_risk_amount != expected_allowed_risk:
                 raise ValueError("allowed risk does not match immutable inputs")
+        expected_safety_reasons: set[RiskRejectionCode] = set()
+        loss_states = (safety.agent_loss_state, safety.parent_loss_state)
+        if any(
+            proposal.as_of < loss_state.session_start_at
+            or proposal.as_of >= loss_state.session_end_at
+            for loss_state in loss_states
+        ):
+            expected_safety_reasons.add(RiskRejectionCode.SAFETY_STATE_MISMATCH)
+        if any(
+            loss_state.effective_at > self.evaluated_at
+            or loss_state.observed_at > self.evaluated_at
+            for loss_state in loss_states
+        ):
+            expected_safety_reasons.add(RiskRejectionCode.FUTURE_SAFETY_STATE)
+        if any(self.evaluated_at >= loss_state.valid_until for loss_state in loss_states):
+            expected_safety_reasons.add(RiskRejectionCode.STALE_SAFETY_STATE)
+        if any(
+            lock.reason is SafetyLockReason.DRAWDOWN_LOCK for lock in safety.active_locks
+        ) or any(loss_state.loss_breached for loss_state in loss_states):
+            expected_safety_reasons.add(RiskRejectionCode.DRAWDOWN_LOCK)
+        if any(lock.reason is not SafetyLockReason.DRAWDOWN_LOCK for lock in safety.active_locks):
+            expected_safety_reasons.add(RiskRejectionCode.TRADING_LOCK)
+        if limits.agent_remaining_loss_headroom <= 0 or limits.parent_remaining_loss_headroom <= 0:
+            expected_safety_reasons.add(RiskRejectionCode.DRAWDOWN_LOCK)
+        actual_safety_reasons = set(self.reason_codes).intersection(
+            {
+                RiskRejectionCode.SAFETY_STATE_MISMATCH,
+                RiskRejectionCode.FUTURE_SAFETY_STATE,
+                RiskRejectionCode.STALE_SAFETY_STATE,
+                RiskRejectionCode.DRAWDOWN_LOCK,
+                RiskRejectionCode.TRADING_LOCK,
+            }
+        )
+        if actual_safety_reasons != expected_safety_reasons:
+            raise ValueError("safety rejection reasons do not match bound causal evidence")
+        expected_scope_reasons: set[RiskRejectionCode] = set()
+        if proposal.agent_id != state.allocation.agent_id:
+            expected_scope_reasons.add(RiskRejectionCode.OWNERSHIP_MISMATCH)
+        if (
+            proposal.authority_context.configuration_version_id
+            != configuration.authority_configuration_version_id
+            or state.allocation.configuration_version_id
+            != configuration.authority_configuration_version_id
+        ):
+            expected_scope_reasons.add(RiskRejectionCode.CONFIGURATION_MISMATCH)
+        if (
+            proposal.entry.currency != state.parent.currency
+            or proposal.entry.currency != state.allocation.currency
+        ):
+            expected_scope_reasons.add(RiskRejectionCode.CURRENCY_MISMATCH)
+        actual_scope_reasons = set(self.reason_codes).intersection(
+            {
+                RiskRejectionCode.OWNERSHIP_MISMATCH,
+                RiskRejectionCode.CONFIGURATION_MISMATCH,
+                RiskRejectionCode.CURRENCY_MISMATCH,
+            }
+        )
+        if actual_scope_reasons != expected_scope_reasons:
+            raise ValueError("scope rejection reasons do not match bound source evidence")
+        expected_context_reasons: set[RiskRejectionCode] = set()
+        dimensions = proposal.authority_context.execution_dimensions
+        if proposal.side is not ProposalSide.LONG:
+            expected_context_reasons.add(RiskRejectionCode.UNSUPPORTED_DIRECTION)
+        if proposal.stop_level >= proposal.entry.reference_price:
+            expected_context_reasons.add(RiskRejectionCode.INVALID_STOP_GEOMETRY)
+        if dimensions.execution_environment not in configuration.allowed_execution_environments:
+            expected_context_reasons.add(RiskRejectionCode.ENVIRONMENT_RESTRICTION)
+        if self.evaluated_at < proposal.as_of:
+            expected_context_reasons.add(RiskRejectionCode.FUTURE_PROPOSAL)
+        if self.evaluated_at >= proposal.valid_until:
+            expected_context_reasons.add(RiskRejectionCode.EXPIRED_PROPOSAL)
+        elif self.evaluated_at - proposal.as_of > timedelta(
+            seconds=configuration.max_proposal_age_seconds
+        ):
+            expected_context_reasons.add(RiskRejectionCode.STALE_PROPOSAL)
+        if state.allocation.active_reservation_count >= configuration.max_concurrent_reservations:
+            expected_context_reasons.add(RiskRejectionCode.RESERVATION_CAPACITY_UNAVAILABLE)
+        actual_context_reasons = set(self.reason_codes).intersection(
+            {
+                RiskRejectionCode.UNSUPPORTED_DIRECTION,
+                RiskRejectionCode.INVALID_STOP_GEOMETRY,
+                RiskRejectionCode.ENVIRONMENT_RESTRICTION,
+                RiskRejectionCode.FUTURE_PROPOSAL,
+                RiskRejectionCode.EXPIRED_PROPOSAL,
+                RiskRejectionCode.STALE_PROPOSAL,
+                RiskRejectionCode.RESERVATION_CAPACITY_UNAVAILABLE,
+            }
+        )
+        if actual_context_reasons != expected_context_reasons:
+            raise ValueError("context rejection reasons do not match bound source evidence")
+        if (
+            self.status is RiskDecisionStatus.APPROVED_FOR_RESERVATION
+            and dimensions.approval_policy not in configuration.allowed_approval_policies
+        ):
+            raise ValueError("approved decision uses a disallowed approval policy")
         if self.risk_decision_id != calculate_risk_decision_id(self):
             raise ValueError("risk decision identity does not match content")
         return self

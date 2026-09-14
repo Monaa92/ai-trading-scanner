@@ -363,7 +363,11 @@ def test_sizing_decision_rejects_reidentified_arithmetic_forgery(
     content["sizing_decision_id"] = calculate_sizing_decision_id(content)
 
     with pytest.raises(
-        ValidationError, match="arithmetically inconsistent|immutable proposal content"
+        ValidationError,
+        match=(
+            "deterministic result of bound inputs|arithmetically inconsistent|"
+            "immutable proposal content"
+        ),
     ):
         SizingDecision.model_validate(content)
 

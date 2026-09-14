@@ -340,11 +340,12 @@ class RiskEngine:
             modeled_risk = quantity * unit_modeled_loss
             reservation_amount = quantity * cash_per_unit
             content: dict[str, object] = {
-                "schema_version": "sizing-decision-v3",
+                "schema_version": "sizing-decision-v4",
                 "proposal_id": proposal.proposal_id,
                 "risk_configuration_id": configuration.risk_configuration_id,
                 "source_proposal": proposal,
                 "source_risk_configuration": configuration,
+                "source_evaluation_state": state,
                 "account_id": parent.account_id,
                 "allocation_id": allocation.allocation_id,
                 "agent_id": allocation.agent_id,
@@ -430,7 +431,7 @@ class RiskEngine:
             parent_remaining_loss_headroom=_loss_capacity(configuration, state)[3],
         )
         content: dict[str, object] = {
-            "schema_version": "risk-decision-v3",
+            "schema_version": "risk-decision-v4",
             "status": status,
             "reason_codes": reasons,
             "proposal_id": proposal.proposal_id,
@@ -438,6 +439,9 @@ class RiskEngine:
             "account_id": state.parent.account_id,
             "allocation_id": state.allocation.allocation_id,
             "risk_configuration_id": configuration.risk_configuration_id,
+            "source_proposal": proposal,
+            "source_risk_configuration": configuration,
+            "source_evaluation_state": state,
             "evaluated_at": evaluated_at,
             "evaluated_limits": limits,
             "evaluated_safety_state": state.safety,

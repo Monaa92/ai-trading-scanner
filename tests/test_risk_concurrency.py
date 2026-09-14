@@ -98,10 +98,13 @@ def test_same_agent_concurrent_requests_cannot_overreserve() -> None:
 
 
 def test_different_agents_cannot_exceed_shared_parent_capacity() -> None:
-    configured = risk_policy(max_concurrent_reservations=2)
+    configured = risk_policy(
+        max_concurrent_reservations=2,
+        max_parent_exposure_fraction=Decimal("0.5"),
+    )
     allocation_a = allocation_snapshot(agent="agent:A", allocation="allocation:A")
     allocation_b = allocation_snapshot(agent="agent:B", allocation="allocation:B")
-    store = coordinator(parent=parent_snapshot("100"), allocations=(allocation_a, allocation_b))
+    store = coordinator(parent=parent_snapshot("200"), allocations=(allocation_a, allocation_b))
     proposal_a = trade_proposal(agent="agent:A", final_quantity=Decimal("0.7"))
     proposal_b = trade_proposal(agent="agent:B", final_quantity=Decimal("0.7"))
     engine = RiskEngine()

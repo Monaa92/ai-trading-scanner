@@ -11,6 +11,7 @@ from risk_helpers import (
     trade_proposal,
 )
 
+from ai_trading_scanner.domain import ConfigurationVersionId
 from ai_trading_scanner.domain.execution import (
     ApprovalPolicy,
     ExecutionEnvironment,
@@ -118,7 +119,7 @@ def test_ownership_configuration_and_currency_mismatches_are_structured() -> Non
     proposal = trade_proposal(agent="agent:A")
     wrong_owner = allocation_snapshot(agent="agent:B")
     wrong_config = wrong_owner.model_copy(
-        update={"configuration_version_id": "different-config-v1"}
+        update={"configuration_version_id": ConfigurationVersionId.parse("different-config-v1")}
     )
     wrong_currency = wrong_owner.model_copy(update={"currency": "EUR"})
 

@@ -214,7 +214,10 @@ def test_reidentified_allowed_risk_cannot_disagree_with_bound_configuration() ->
     )
     content["risk_decision_id"] = calculate_risk_decision_id(content)
 
-    with pytest.raises(ValidationError, match="allowed risk does not match immutable inputs"):
+    with pytest.raises(
+        ValidationError,
+        match="deterministic result of bound inputs|allowed risk does not match immutable inputs",
+    ):
         RiskDecision.model_validate(content)
 
 

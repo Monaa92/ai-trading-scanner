@@ -1,6 +1,6 @@
 # Phase 5 independent review
 
-Status: **CHANGES REQUIRED ON TWO CANDIDATES; SECOND REMEDIATION RE-REVIEW REQUIRED.** PR #4 reviewed candidate `0c36a5de657e749daa0ef987c47c44d299dd67b7` and returned CHANGES REQUIRED. Independent re-review of candidate `7ea3dc007e212d9f391bb6cc4e9b36139d005322` also returned CHANGES REQUIRED. No approval is recorded. Review the exact second-remediation PR head identified in the review handoff; do not merge until every finding is resolved and that exact head is independently approved.
+Status: **CHANGES REQUIRED ON THREE CANDIDATES; THIRD REMEDIATION RE-REVIEW REQUIRED.** PR #4 reviews of candidates `0c36a5de657e749daa0ef987c47c44d299dd67b7`, `7ea3dc007e212d9f391bb6cc4e9b36139d005322` and `d1da3a07db417071697730b4acabe220755f22bc` all returned CHANGES REQUIRED. No approval is recorded. Review the exact third-remediation PR head identified in the review handoff; do not merge until every finding is resolved and that exact head is independently approved.
 
 | Area | Implementation | Behavioral evidence | Intended invariant | Failure impact |
 | --- | --- | --- | --- | --- |
@@ -9,9 +9,9 @@ Status: **CHANGES REQUIRED ON TWO CANDIDATES; SECOND REMEDIATION RE-REVIEW REQUI
 | Safe rounding | `_floor_to_increment` | boundary and exact-final-quantity cases | Future sizing floors; exact approved quantity rejects if infeasible | Silent approval mutation or risk increase |
 | Ownership hierarchy | snapshots and coordinator | config/reservation/concurrency cases | Proposal agent, allocation and parent scope match | Cross-agent capital use |
 | Agent isolation | scoped snapshots/locks | two-agent and local-lock tests | Peer available capital/locks do not silently alter another allocation | Contaminated experiments |
-| Parent capacity | sizing plus coordinator | shared-parent concurrency test | Aggregate reservations never exceed parent capital | Double spending real/shared capital |
+| Parent capacity | sizing plus coordinator | shared-parent reservation and allocation-registration races | Aggregate durable allocation ownership and reservations never exceed their respective parent bounds | Overlapping ownership or double spending real/shared capital |
 | Atomic reservation | `InMemoryCapitalCoordinator.reserve` | same-agent/shared-parent/rollback races | Parent+allocation publish all-or-none after fresh validation | Partial debit or over-reservation |
-| Transaction ordering | `_scope_locks` | all concurrency/lifecycle tests | Parent lock acquired before allocation lock | Deadlock or split state |
+| Transaction ordering | `_scope_locks` and registration | all concurrency/lifecycle tests | Nested order is proposal → parent → allocation → registry; allocation registration uses parent → registry | Deadlock or split state |
 | Duplicate handling | proposal-specific guard and coordinator-wide proposal index | sequential/cross-allocation/cross-parent/concurrent duplicate tests | One economic reservation per proposal in one coordinator; same-owner replay is revalidated | Duplicate capital hold |
 | Lifecycle/conservation | coordinator transitions | release/consume/expire/conflict tests | No reactivation, creation or loss of capital | Ledger drift |
 | Lock behavior | safety lock models/coordinator | local/parent and lock-race tests | Applicable lock blocks new reservation; existing hold remains | Safety bypass or lost capital |
@@ -35,6 +35,16 @@ The independent re-review found three remaining issues in `7ea3dc0`: agent limit
 
 Sizing evidence now embeds self-validating immutable `TradeProposal` and `RiskConfiguration` objects and checks entry, stop, currency, costs, sizing intent, quantity increment, configured ceilings and allowed-risk derivation. Loss evidence now binds parent or agent-allocation scope, account/allocation/agent identity, session identity/boundaries, observation/effective/valid-until time and revision. Registration, update, evaluation and final reservation reject misattribution, previous/stale/future evidence, timestamp or revision regression and changed same-session boundaries. `test_risk_second_remediation.py` contains the adversarial evidence. This remains a candidate description, not approval.
 
+## Final re-review findings and third remediation
+
+The final independent re-review found four remaining issues in `d1da3a0`: registered allocations could claim more capital than their parent owned; a coherently changed `FUTURE_RISK_ENGINE` quantity could retain false derivation provenance; rejected risk decisions did not bind their complete proposal/configuration/state relationships; and authoritative review status omitted the latest rejection. The result was **CHANGES REQUIRED**, not approval.
+
+The third remediation tracks durable allocated capital per parent. Registration acquires the parent lock before the registry lock, validates currency and `sum(allocated_capital) <= parent.total_capital`, then publishes the allocation, agent index, loss state, lock and aggregate together. A rejected registration publishes none. Reservation release, expiry and consumption do not free allocation ownership; no allocation-retirement operation exists in Phase 5.
+
+`SizingDecision` schema v4 embeds the complete `RiskEvaluationState` as well as proposal and risk configuration, and independently re-derives the authoritative quantity and every financial field. Hashes identify supplied content; deterministic derivation establishes that the result follows from the claimed sources. Active replay uses the original canonical source state only when the freshly reconstructed state is value-equal, so a changed lock, loss state, reservation or revision still forces new validation.
+
+`RiskDecision` schema v4 embeds proposal, configuration and evaluation state for approved and rejected results. It checks account/allocation/agent attribution, derived limits, exact safety evidence, sizing relationships, scope/configuration/currency reason consistency and causal session/future/stale safety reasons. Legitimate ownership-mismatch rejections remain representable, while a forged unrelated identity, foreign safety snapshot or false reason attribution fails offline validation. The 15 tests in `test_risk_third_remediation.py` exercise exact/overflow Decimal allocation boundaries, atomic and concurrent registration, all reservation terminal paths, registration/reservation lock interaction, quantity forgery, rejected-decision attribution, foreign safety, stale evidence and cross-session state.
+
 ## Candidate verification
 
-Before commit, record exact test splits, lint/type/build/health, isolated installation, security/scope scans, documentation links and whitespace results. The review handoff must identify the exact second-remediation remote commit. PR #4 exists, but no approval or merge evidence currently exists.
+The third-remediation workspace passes 434 total tests: 303 Phase 1–4 regressions and 131 focused Phase 5 cases. Ruff lint/format, strict mypy, lock verification, offline build, source health and isolated offline wheel-install health pass. The remaining repository/security/documentation checks and exact remote candidate SHA are recorded in the final review handoff. PR #4 exists, but no approval or merge evidence currently exists.
