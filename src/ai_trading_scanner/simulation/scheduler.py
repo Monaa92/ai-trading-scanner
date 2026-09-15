@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from threading import Lock
 from typing import Literal, Self
 
@@ -30,11 +30,6 @@ def _without_id(value: BaseModel | dict[str, object], field: str) -> dict[str, o
     return {key: item for key, item in value.items() if key != field}
 
 
-def _validated_event(value: ReplayEvent | Mapping[str, object]) -> ReplayEvent:
-    content = value.model_dump(mode="python") if isinstance(value, ReplayEvent) else dict(value)
-    return ReplayEvent.model_validate(content)
-
-
 class ReplaySchedule(BaseModel):
     """Immutable canonical event sequence for exactly one simulation run."""
 
@@ -47,26 +42,23 @@ class ReplaySchedule(BaseModel):
     events: tuple[ReplayEvent, ...] = Field(min_length=1)
 
     @classmethod
-    def create(cls, events: Iterable[ReplayEvent | Mapping[str, object]]) -> ReplaySchedule:
-        """Validate event envelopes and derive their one canonical order."""
-        canonical_events = order_replay_events(tuple(_validated_event(event) for event in events))
+    def from_artifact(cls, artifact: ReplayArtifactBundle) -> ReplaySchedule:
+        """Derive a schedule only after authoritative typed artifact validation."""
+        validated = ReplayArtifactBundle.model_validate(artifact.model_dump(mode="python"))
+        canonical_events = order_replay_events(validated.events)
         content: dict[str, object] = {
             "schema_version": "replay-schedule-v1",
-            "run_id": canonical_events[0].run_id,
+            "run_id": validated.manifest.run_id,
             "replay_trace_sha256": calculate_replay_trace_hash(canonical_events),
             "events": canonical_events,
         }
         return cls.model_validate({"schedule_id": calculate_replay_schedule_id(content), **content})
 
-    @classmethod
-    def from_artifact(cls, artifact: ReplayArtifactBundle) -> ReplaySchedule:
-        """Revalidate a typed artifact before scheduling only its event envelopes."""
-        validated = ReplayArtifactBundle.model_validate(artifact.model_dump(mode="python"))
-        return cls.create(validated.events)
-
     @model_validator(mode="after")
     def validate_schedule(self) -> Self:
-        revalidated = tuple(_validated_event(event) for event in self.events)
+        revalidated = tuple(
+            ReplayEvent.model_validate(event.model_dump(mode="python")) for event in self.events
+        )
         if revalidated != self.events:
             raise ValueError("replay schedule events differ after contract validation")
         validate_replay_trace(self.events)
@@ -100,31 +92,6 @@ class ReplaySchedulerCheckpoint(BaseModel):
     consumed_event_ids: tuple[ReplayEventId, ...] = ()
     next_event_id: ReplayEventId | None
 
-    @classmethod
-    def create(cls, schedule: ReplaySchedule, next_position: int) -> ReplaySchedulerCheckpoint:
-        """Capture the exact consumed prefix and expected continuation."""
-        validated_schedule = ReplaySchedule.model_validate(schedule.model_dump(mode="python"))
-        if next_position < 0 or next_position > len(validated_schedule.events):
-            raise ValueError("scheduler checkpoint position is outside the schedule")
-        content: dict[str, object] = {
-            "schema_version": "replay-scheduler-checkpoint-v1",
-            "schedule_id": validated_schedule.schedule_id,
-            "run_id": validated_schedule.run_id,
-            "next_position": next_position,
-            "total_events": len(validated_schedule.events),
-            "consumed_event_ids": tuple(
-                event.replay_event_id for event in validated_schedule.events[:next_position]
-            ),
-            "next_event_id": (
-                validated_schedule.events[next_position].replay_event_id
-                if next_position < len(validated_schedule.events)
-                else None
-            ),
-        }
-        return cls.model_validate(
-            {"checkpoint_id": calculate_replay_scheduler_checkpoint_id(content), **content}
-        )
-
     @model_validator(mode="after")
     def validate_checkpoint(self) -> Self:
         if self.next_position > self.total_events:
@@ -142,7 +109,7 @@ class ReplaySchedulerCheckpoint(BaseModel):
 
     def validate_for(self, schedule: ReplaySchedule) -> None:
         """Prove that this state is an unskipped prefix of the supplied schedule."""
-        expected = ReplaySchedulerCheckpoint.create(schedule, self.next_position)
+        expected = _checkpoint_at(schedule, self.next_position)
         if self != expected:
             raise SchedulerCheckpointError(
                 "scheduler checkpoint belongs to another schedule or state"
@@ -166,35 +133,94 @@ class SchedulerExhaustedError(RuntimeError):
     """Raised when a caller attempts to consume beyond deterministic exhaustion."""
 
 
+@dataclass(slots=True)
+class _TrustedCursorState:
+    """Process-local authority for one logical cursor over one exact schedule."""
+
+    schedule_id: ReplayScheduleId
+    run_id: SimulationRunId
+    total_events: int
+    next_position: int
+    trusted_checkpoint_id: ReplaySchedulerCheckpointId | None
+    lock: Lock
+
+
+_PROCESS_CURSOR_STATES: dict[ReplayScheduleId, _TrustedCursorState] = {}
+_PROCESS_CURSOR_STATES_LOCK = Lock()
+
+
+def _checkpoint_at(schedule: ReplaySchedule, next_position: int) -> ReplaySchedulerCheckpoint:
+    """Build structural checkpoint content; this function does not grant resume trust."""
+    if next_position < 0 or next_position > len(schedule.events):
+        raise ValueError("scheduler checkpoint position is outside the schedule")
+    content: dict[str, object] = {
+        "schema_version": "replay-scheduler-checkpoint-v1",
+        "schedule_id": schedule.schedule_id,
+        "run_id": schedule.run_id,
+        "next_position": next_position,
+        "total_events": len(schedule.events),
+        "consumed_event_ids": tuple(
+            event.replay_event_id for event in schedule.events[:next_position]
+        ),
+        "next_event_id": (
+            schedule.events[next_position].replay_event_id
+            if next_position < len(schedule.events)
+            else None
+        ),
+    }
+    return ReplaySchedulerCheckpoint.model_validate(
+        {"checkpoint_id": calculate_replay_scheduler_checkpoint_id(content), **content}
+    )
+
+
+def _trusted_state_for(schedule: ReplaySchedule) -> _TrustedCursorState:
+    """Return the single process-local cursor authority for an exact schedule."""
+    with _PROCESS_CURSOR_STATES_LOCK:
+        state = _PROCESS_CURSOR_STATES.get(schedule.schedule_id)
+        if state is None:
+            state = _TrustedCursorState(
+                schedule_id=schedule.schedule_id,
+                run_id=schedule.run_id,
+                total_events=len(schedule.events),
+                next_position=0,
+                trusted_checkpoint_id=None,
+                lock=Lock(),
+            )
+            _PROCESS_CURSOR_STATES[schedule.schedule_id] = state
+            return state
+        if state.run_id != schedule.run_id or state.total_events != len(schedule.events):
+            raise SchedulerCheckpointError("scheduler authority conflicts with schedule identity")
+        return state
+
+
 class DeterministicReplayScheduler:
     """Tightly controlled one-step cursor; it performs no replay side effects."""
 
-    __slots__ = ("_lock", "_next_position", "_schedule")
+    __slots__ = ("_schedule", "_state")
 
     def __init__(
         self,
-        schedule: ReplaySchedule,
+        artifact: ReplayArtifactBundle,
         checkpoint: ReplaySchedulerCheckpoint | None = None,
     ) -> None:
-        self._schedule = ReplaySchedule.model_validate(schedule.model_dump(mode="python"))
-        self._lock = Lock()
-        if checkpoint is None:
-            self._next_position = 0
-        else:
+        if not isinstance(artifact, ReplayArtifactBundle):
+            raise TypeError("executable scheduler construction requires ReplayArtifactBundle")
+        validated_artifact = ReplayArtifactBundle.model_validate(artifact.model_dump(mode="python"))
+        self._schedule = ReplaySchedule.from_artifact(validated_artifact)
+        self._state = _trusted_state_for(self._schedule)
+        if checkpoint is not None:
             validated_checkpoint = ReplaySchedulerCheckpoint.model_validate(
                 checkpoint.model_dump(mode="python")
             )
             validated_checkpoint.validate_for(self._schedule)
-            self._next_position = validated_checkpoint.next_position
-
-    @classmethod
-    def from_events(
-        cls,
-        events: Iterable[ReplayEvent | Mapping[str, object]],
-        *,
-        checkpoint: ReplaySchedulerCheckpoint | None = None,
-    ) -> DeterministicReplayScheduler:
-        return cls(ReplaySchedule.create(events), checkpoint)
+            with self._state.lock:
+                if (
+                    self._state.trusted_checkpoint_id != validated_checkpoint.checkpoint_id
+                    or self._state.next_position != validated_checkpoint.next_position
+                ):
+                    raise SchedulerCheckpointError(
+                        "scheduler checkpoint was not issued from current process-local state"
+                    )
 
     @classmethod
     def from_artifact(
@@ -203,7 +229,7 @@ class DeterministicReplayScheduler:
         *,
         checkpoint: ReplaySchedulerCheckpoint | None = None,
     ) -> DeterministicReplayScheduler:
-        return cls(ReplaySchedule.from_artifact(artifact), checkpoint)
+        return cls(artifact, checkpoint)
 
     @property
     def schedule(self) -> ReplaySchedule:
@@ -220,18 +246,18 @@ class DeterministicReplayScheduler:
     @property
     def position(self) -> int:
         """Index of the next event; it advances by exactly one per consumption."""
-        with self._lock:
-            return self._next_position
+        with self._state.lock:
+            return self._state.next_position
 
     @property
     def remaining(self) -> int:
-        with self._lock:
-            return len(self._schedule.events) - self._next_position
+        with self._state.lock:
+            return len(self._schedule.events) - self._state.next_position
 
     @property
     def has_events(self) -> bool:
-        with self._lock:
-            return self._next_position < len(self._schedule.events)
+        with self._state.lock:
+            return self._state.next_position < len(self._schedule.events)
 
     @property
     def exhausted(self) -> bool:
@@ -242,19 +268,22 @@ class DeterministicReplayScheduler:
         return self.checkpoint()
 
     def checkpoint(self) -> ReplaySchedulerCheckpoint:
-        with self._lock:
-            return ReplaySchedulerCheckpoint.create(self._schedule, self._next_position)
+        with self._state.lock:
+            checkpoint = _checkpoint_at(self._schedule, self._state.next_position)
+            self._state.trusted_checkpoint_id = checkpoint.checkpoint_id
+            return checkpoint
 
     def peek_next(self) -> ReplayEvent:
-        with self._lock:
-            if self._next_position >= len(self._schedule.events):
+        with self._state.lock:
+            if self._state.next_position >= len(self._schedule.events):
                 raise SchedulerExhaustedError("replay schedule is exhausted")
-            return self._schedule.events[self._next_position]
+            return self._schedule.events[self._state.next_position]
 
     def next_event(self) -> ReplayEvent:
-        with self._lock:
-            if self._next_position >= len(self._schedule.events):
+        with self._state.lock:
+            if self._state.next_position >= len(self._schedule.events):
                 raise SchedulerExhaustedError("replay schedule is exhausted")
-            event = self._schedule.events[self._next_position]
-            self._next_position += 1
+            event = self._schedule.events[self._state.next_position]
+            self._state.next_position += 1
+            self._state.trusted_checkpoint_id = None
             return event
