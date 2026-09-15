@@ -155,6 +155,14 @@ class ReplaySchedulerCheckpointId(Identifier):
     """Content-derived identity of one replay scheduler checkpoint."""
 
 
+class OrchestrationConfigurationId(Identifier):
+    """Content-derived identity of one causal orchestration configuration."""
+
+
+class OrchestrationResultId(Identifier):
+    """Content-derived identity of one causal orchestration evaluation."""
+
+
 class ReplayArtifactId(Identifier):
     """Content-derived identity of one validated immutable replay artifact."""
 

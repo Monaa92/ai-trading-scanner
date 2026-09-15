@@ -47,6 +47,14 @@ from ai_trading_scanner.simulation.models import (
     validate_fill_against_order,
     validate_replay_trace,
 )
+from ai_trading_scanner.simulation.orchestration import (
+    CausalOrchestrationResult,
+    CausalOrchestrator,
+    OrchestrationInvariantError,
+    OrchestrationOutcome,
+    calculate_orchestration_configuration_id,
+    calculate_orchestration_result_id,
+)
 from ai_trading_scanner.simulation.portfolio import (
     CashLedgerSnapshot,
     PortfolioSnapshot,
@@ -77,6 +85,8 @@ from ai_trading_scanner.simulation.validation import (
 
 __all__ = [
     "CashLedgerSnapshot",
+    "CausalOrchestrationResult",
+    "CausalOrchestrator",
     "DeterministicReplayScheduler",
     "ExecutionResolutionOutcome",
     "ExecutionResolutionPayload",
@@ -88,6 +98,8 @@ __all__ = [
     "IntrabarAmbiguityPolicy",
     "MarketEventReference",
     "MissingExecutionDataPolicy",
+    "OrchestrationInvariantError",
+    "OrchestrationOutcome",
     "PortfolioSnapshot",
     "PositionAccountingPolicy",
     "PositionChange",
@@ -121,6 +133,8 @@ __all__ = [
     "calculate_fill_costs",
     "calculate_marker_payload_id",
     "calculate_market_event_id",
+    "calculate_orchestration_configuration_id",
+    "calculate_orchestration_result_id",
     "calculate_portfolio_snapshot_id",
     "calculate_position_change_id",
     "calculate_position_id",

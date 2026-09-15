@@ -1,6 +1,6 @@
 # Backend architecture
 
-Status: mostly design specification. Phases 1–5 implement the offline data/indicator/strategy/risk foundations. The Phase 6 foundation adds immutable simulation and portfolio contracts plus canonical event serialization; it does not implement the scheduler, accounting transitions, durable persistence or broker boundary. Parent: [[01 - Architecture/System Architecture]].
+Status: mostly design specification. Phases 1–5 implement the offline data/indicator/strategy/risk foundations. Phase 6 adds immutable simulation/portfolio contracts, canonical event serialization, an accepted in-memory scheduler and a bounded Phase 2–5 causal-orchestration candidate. Accounting/execution transitions, durable persistence and the broker boundary remain unimplemented. Parent: [[01 - Architecture/System Architecture]].
 
 ## Ownership and dependency direction
 

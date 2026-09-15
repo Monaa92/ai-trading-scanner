@@ -1,6 +1,6 @@
 # Phase 6 completion criteria
 
-Status: **IN PROGRESS — CONTRACT FOUNDATION AND IN-MEMORY SCHEDULER IMPLEMENTED; END-TO-END REPLAY NOT IMPLEMENTED.**
+Status: **IN PROGRESS — CONTRACT FOUNDATION, ACCEPTED IN-MEMORY SCHEDULER AND CAUSAL ORCHESTRATION CANDIDATE IMPLEMENTED; END-TO-END REPLAY NOT IMPLEMENTED.**
 
 Phase 6 is complete only when one deterministic offline pipeline consumes canonical Phase 2 data and causally drives accepted Phase 3 indicators, Phase 4 decisions, Phase 5 risk/reservation state, simulated execution, portfolio accounting and structured retained results. Passing the foundation model tests does not satisfy this completion invariant.
 
@@ -9,28 +9,29 @@ Phase 6 is complete only when one deterministic offline pipeline consumes canoni
 | Area | Implemented contract evidence | Remaining behavioral evidence |
 | --- | --- | --- |
 | Run identity | Immutable manifest binds dataset, participant ownership, strategy/model dimensions, indicator/risk/management/configuration, execution/cost models, starting capital and SIMULATION replay dimensions | Runner must resolve and retain the exact manifest and reject absent/mismatched artifacts |
-| Causal clocks | Market references separate interval/event/availability; orders separate decision/submission/eligibility/expiry; fills separate simulated execution from causal recording; executable scheduling requires the fully validated typed artifact and exposes envelopes only in canonical order | Orchestration must prove no future bar/indicator/quality/portfolio/fill payload state enters a decision |
-| Event order | Versioned phase ranks and stable dependency-aware tie-break keys; equal-time position changes/realized trades/checkpoints and order-insensitive artifact registries derive from the canonical trace; one process-local cursor per schedule consumes each envelope once with deterministic exhaustion | Discrete orchestration loop must create and process payload effects in the specified sequence independent of worker order |
+| Causal clocks | Market references separate interval/event/availability; executable scheduling requires the fully validated typed artifact; one-event orchestration intersects the Phase 2 as-of view with the actually consumed market-event prefix. Even a same-time bar stays invisible until its own event is consumed. Phase 3 indicators and Phase 4 decisions bind that exact slice. | Execution resolution must preserve the boundary for orders, fills, portfolio state and protection events |
+| Event order | Versioned phase ranks and stable dependency-aware tie-break keys; equal-time position changes/realized trades/checkpoints and order-insensitive artifact registries derive from the canonical trace; one process-local cursor consumes each envelope once. The orchestration step advances only through `next_event()` and never mutates schedule history. | The later execution loop must create and process order/fill/portfolio effects in the specified sequence independent of worker order |
+| Strategy/risk orchestration | All four registered strategy configurations run through the existing Phase 3 calculators and Phase 4 evaluator with identical normalized market evidence in equivalent runs. NO_TRADE produces immutable evidence and no risk mutation. Proposals go through the existing Phase 5 risk engine and atomic coordinator, retaining sizing, rejection or reservation evidence. | Independent review, multi-participant historical runner, durable evidence store and integration with execution/accounting remain |
 | Simulation execution | MARKET-only full-fill contract; strict later eligibility; next eligible same-XNYS-session bar open; calendar-bounded expiry; typed unique terminal fill/unfilled/no-data/rejected resolution linkage; stop-first ambiguity; no randomness | Scheduler must emit terminal outcomes; order status/cancel behavior, liquidity gates, fixed stop/target and reservation lifecycle must execute |
 | Costs | Content-identified exact minimum/per-share/spread/slippage/other-fee components | Sourced `SIMULATED_IBKR_US_TIERED`, round-trip reconciliation, rounding/regulatory/FX behavior remain |
 | Portfolio | Cash partitions plus canonical-event-ordered in-memory COMPLETE reconciliation derive fill notional, costs, cash, open positions/cost basis, realized/unrealized/gross/net P&L, trades and equity; supplied snapshots/trades must match exactly | Transactional/idempotent posting service, durable ledger/restart, external marks, broader lifecycle and injected publication-failure recovery remain |
 | Results | Content-identified result linkage, typed terminal resolution references, deterministic UTF-8 NDJSON trace bytes/hash and scheduler-issued current-state in-memory checkpoints; content identity is not authentication | Durable monotonic checkpoint/artifact store, cross-process anti-rollback, crash restart, indexing, retention and dashboard inputs remain |
-| Isolation/authority | Run/order/fill/position/result identities carry account, allocation and agent; SIMULATION + replay only; package has no broker/provider/network/AI imports | Multi-participant orchestration and adversarial cross-agent execution/storage tests remain |
+| Isolation/authority | Run/order/fill/position/result identities carry account, allocation and agent; orchestration rejects foreign capital scope and binds proposal/risk/reservation ownership. Equivalent per-agent runs share immutable market evidence while coordinators remain separate. SIMULATION + replay only; package has no broker/provider/network/AI imports. | Final multi-participant runner plus adversarial cross-agent execution/storage tests remain |
 
 ## Completion gates
 
 Phase 6 must not be marked COMPLETE until all of these pass:
 
 1. A deterministic scheduler replays canonical Phase 2 records strictly by `available_at`, not only event time.
-2. Accepted Phase 3 indicators update from causal prefixes and retain visible quality lineage.
-3. Phase 4 strategies evaluate only after those inputs are available; NO_TRADE remains a persisted normal outcome.
-4. Phase 5 risk and reservation receive the exact causally current participant/parent state.
+2. Accepted Phase 3 indicators update from causal prefixes and retain visible quality lineage. **Implemented in the bounded orchestration candidate; independent review pending.**
+3. Phase 4 strategies evaluate only after those inputs are available; NO_TRADE remains a persisted normal outcome. **Implemented as immutable orchestration evidence; durable persistence remains pending.**
+4. Phase 5 risk and reservation receive the exact causally current participant/parent state. **Implemented for the one-event orchestration step; execution lifecycle integration remains pending.**
 5. Simulation order state, expiry, rejection, cancellation, fill and fixed protection/exit behavior are deterministic and fail closed.
 6. A completed-bar decision cannot fill from the same bar; V1 fills use the next eligible same-session bar open and are published only when its source becomes available.
 7. Reservation, cash, position, costs, realized/unrealized P&L and equity transition atomically and conserve value under duplicate/failure/replay cases.
 8. Gross and net trading P&L reproduce exactly; every commission/spread/slippage/fee is attributable and debited once.
 9. Same immutable dataset/configuration/state produces byte-identical ordered events, decisions, orders, fills, portfolios, result identities and P&L.
-10. Adding or changing future data cannot alter any earlier decision, risk result, order or fill.
+10. Adding or changing future data cannot alter any earlier decision, risk result, order or fill. **Decision/risk prefix isolation is covered; order/fill coverage remains pending.**
 11. Missing intervals, gaps, halts, stale inputs, unavailable liquidity, end-of-data and ambiguous stop/target paths produce the configured conservative result rather than fabricated fills.
 12. Structured run artifacts survive a process restart with checksum/integrity verification, or Phase 6 is explicitly limited to non-restartable diagnostic runs and cannot feed promotion evidence.
 13. Multiple isolated participant fixtures can consume equivalent shared data without sharing cash, reservations, positions, risk, costs, orders or results.

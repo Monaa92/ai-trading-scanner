@@ -1,6 +1,6 @@
 # Gated roadmap
 
-Phases 1–5 are complete on `main`. Phase 6 is **IN PROGRESS** on its feature branch with architecture and immutable contract foundations only. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
+Phases 1–5 are complete on `main`. Phase 6 is **IN PROGRESS** on its feature branch with accepted foundations/scheduling and a bounded causal orchestration candidate. A roadmap authorizes no implementation, account connection or trading beyond an explicitly scoped task.
 
 | Phase | Deliverable | Exit criterion |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ Phases 1–5 are complete on `main`. Phase 6 is **IN PROGRESS** on its feature b
 | 3 | Deterministic indicators — COMPLETE | Exact formulas, seeds/session/gaps, warning lineage, prefix invariance and batch/incremental fixtures pass; independently reviewed, approved and merged in PR #2 (`0cf0497`) |
 | 4 | Strategy and proposal contracts — COMPLETE | Registered unoptimized `BASELINE_RESEARCH_V1` parameters, four independent profiles, first-class NO_TRADE, model/profile independence, agent-scoped pure evaluations and deterministic proposal/management identities; no order submission. Independently reviewed and merged through PR #3 (`60d83842f6bb686f2a407db82781d28ff534b355`). |
 | 5 | Risk/allocation/safety — COMPLETE | Decimal sizing against scoped/fresh current loss/headroom; sizing bound to proposal, configuration and evaluated state; exclusive parent allocation ownership; atomic public scope registration; one registered allocation per agent/coordinator context; exception-atomic parent+agent in-memory reservation/lifecycle publication; proposal-wide uniqueness; expiry-safe replay/lifecycle; relational risk evidence; partitioned scoped locks; conservation and approval-binding behavior implemented. PR #4 was independently approved by `Dekkerszz` and merged as `d08faa7ca3fdd3f35a053838f736d4d709d503d9`. |
-| 6 | Causal backtesting and simulation — IN PROGRESS | Foundation plus typed-artifact-gated canonical schedules, a concurrency-safe process-local cursor, deterministic exhaustion and scheduler-issued current-state checkpoints are implemented for final re-review. Durable cross-process anti-rollback is not implemented. Remaining: Phase 2–5 orchestration, transactional lifecycle posting, external marks, durable artifacts, end-to-end/failure evidence and independent review. |
+| 6 | Causal backtesting and simulation — IN PROGRESS | Accepted foundation/scheduler plus a candidate one-event Phase 2→5 causal orchestration step with consumed-prefix market visibility, four-strategy parity, first-class NO_TRADE and typed risk/rejection/reservation evidence. Remaining: independent review of orchestration, simulated order/fill/protection lifecycle, transactional accounting posting, external marks, durable artifacts/restart, isolated four-agent end-to-end evidence and final review. |
 | 7 | Historical validation | Registered comparable evidence, rejection/counterfactual separation and failed experiments retained |
 | 7a | Optional management hypotheses | Separately specified/versioned dynamic policy and fixed-baseline comparison before any use |
 | 8 | Broker paper integration | Verified fractional protection, attribution, idempotency/reconciliation and kill switch; live unavailable |
@@ -29,4 +29,4 @@ Phases 1–5 are complete on `main`. Phase 6 is **IN PROGRESS** on its feature b
 
 Autonomous paper experiments are controlled research after historical/paper validation. They do not advance operational live autonomy. The four profile names are hypotheses, not permission to invent missing parameters or activate unvalidated management. A deterministic-only program can skip AI phases, documenting that choice, then validate manual operation. Core accounting/audit/statistics begin before research, not postponed to Phase 10.
 
-Exact next action: **independent competent final re-review of the bounded Phase 6 scheduler remediation**. If approved, continue Phase 6 with the Phase 2 market-availability to Phase 3 indicator orchestration increment under a separately bounded task. Phase 7, external order submission, broker integration, PAPER and LIVE remain unauthorized.
+Exact next action: **independent competent review of the exact pushed Phase 6 causal-orchestration candidate**. If approved, continue Phase 6 with a separately bounded deterministic simulated order and terminal execution-resolution increment. Phase 7, external order submission, broker integration, PAPER and LIVE remain unauthorized.
