@@ -5,7 +5,8 @@ Private research project investigating a systematic AI-assisted intraday scanner
 Current state: Phases 1–5 are complete on `main`. Phase 6 — causal backtesting and simulation — is
 in progress on `feat/phase-6-causal-simulation`. The foundation defines content-identified causal
 run/events, next-eligible-bar-open order/fill contracts, versioned costs, conserved Decimal portfolio
-records and deterministic trace serialization. The scheduler, fill/accounting transition engine,
+records, deterministic trace serialization and an in-memory deterministic event scheduler with
+content-bound checkpoints. The fill/accounting transition engine, causal orchestration loop,
 durable artifact writer and end-to-end simulation remain unimplemented. Research baselines remain
 unvalidated. No scanner, broker/provider/AI integration, PAPER/LIVE execution or external order
 authority exists.

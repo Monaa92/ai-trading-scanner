@@ -1,6 +1,6 @@
 # Phase 6 completion criteria
 
-Status: **IN PROGRESS — CONTRACT FOUNDATION IMPLEMENTED; END-TO-END REPLAY NOT IMPLEMENTED.**
+Status: **IN PROGRESS — CONTRACT FOUNDATION AND IN-MEMORY SCHEDULER IMPLEMENTED; END-TO-END REPLAY NOT IMPLEMENTED.**
 
 Phase 6 is complete only when one deterministic offline pipeline consumes canonical Phase 2 data and causally drives accepted Phase 3 indicators, Phase 4 decisions, Phase 5 risk/reservation state, simulated execution, portfolio accounting and structured retained results. Passing the foundation model tests does not satisfy this completion invariant.
 
@@ -9,12 +9,12 @@ Phase 6 is complete only when one deterministic offline pipeline consumes canoni
 | Area | Implemented contract evidence | Remaining behavioral evidence |
 | --- | --- | --- |
 | Run identity | Immutable manifest binds dataset, participant ownership, strategy/model dimensions, indicator/risk/management/configuration, execution/cost models, starting capital and SIMULATION replay dimensions | Runner must resolve and retain the exact manifest and reject absent/mismatched artifacts |
-| Causal clocks | Market references separate interval/event/availability; orders separate decision/submission/eligibility/expiry; fills separate simulated execution from causal recording | Scheduler must prove no future bar/indicator/quality/portfolio/fill state enters a decision |
-| Event order | Versioned phase ranks and stable dependency-aware tie-break keys; equal-time position changes/realized trades/checkpoints and order-insensitive artifact registries derive from the canonical trace | Discrete loop must emit the specified sequence independent of input/worker order |
+| Causal clocks | Market references separate interval/event/availability; orders separate decision/submission/eligibility/expiry; fills separate simulated execution from causal recording; scheduler exposes envelopes only in canonical order | Orchestration must prove no future bar/indicator/quality/portfolio/fill payload state enters a decision |
+| Event order | Versioned phase ranks and stable dependency-aware tie-break keys; equal-time position changes/realized trades/checkpoints and order-insensitive artifact registries derive from the canonical trace; content-identified schedule consumes each envelope once with deterministic exhaustion | Discrete orchestration loop must create and process payload effects in the specified sequence independent of worker order |
 | Simulation execution | MARKET-only full-fill contract; strict later eligibility; next eligible same-XNYS-session bar open; calendar-bounded expiry; typed unique terminal fill/unfilled/no-data/rejected resolution linkage; stop-first ambiguity; no randomness | Scheduler must emit terminal outcomes; order status/cancel behavior, liquidity gates, fixed stop/target and reservation lifecycle must execute |
 | Costs | Content-identified exact minimum/per-share/spread/slippage/other-fee components | Sourced `SIMULATED_IBKR_US_TIERED`, round-trip reconciliation, rounding/regulatory/FX behavior remain |
 | Portfolio | Cash partitions plus canonical-event-ordered in-memory COMPLETE reconciliation derive fill notional, costs, cash, open positions/cost basis, realized/unrealized/gross/net P&L, trades and equity; supplied snapshots/trades must match exactly | Transactional/idempotent posting service, durable ledger/restart, external marks, broader lifecycle and injected publication-failure recovery remain |
-| Results | Content-identified result linkage, typed terminal resolution references and deterministic UTF-8 NDJSON trace bytes/hash | Atomic artifact bundle/store, restart, indexing, retention and dashboard inputs remain |
+| Results | Content-identified result linkage, typed terminal resolution references, deterministic UTF-8 NDJSON trace bytes/hash and schedule/run/prefix-bound in-memory checkpoints | Durable checkpoint/artifact store, crash restart, indexing, retention and dashboard inputs remain |
 | Isolation/authority | Run/order/fill/position/result identities carry account, allocation and agent; SIMULATION + replay only; package has no broker/provider/network/AI imports | Multi-participant orchestration and adversarial cross-agent execution/storage tests remain |
 
 ## Completion gates

@@ -147,6 +147,14 @@ class ReplayEventId(Identifier):
     """Content-derived identity of an ordered replay event envelope."""
 
 
+class ReplayScheduleId(Identifier):
+    """Content-derived identity of one canonical replay schedule."""
+
+
+class ReplaySchedulerCheckpointId(Identifier):
+    """Content-derived identity of one replay scheduler checkpoint."""
+
+
 class ReplayArtifactId(Identifier):
     """Content-derived identity of one validated immutable replay artifact."""
 

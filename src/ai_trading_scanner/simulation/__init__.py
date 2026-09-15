@@ -60,6 +60,15 @@ from ai_trading_scanner.simulation.portfolio import (
     calculate_position_id,
     calculate_realized_trade_result_id,
 )
+from ai_trading_scanner.simulation.scheduler import (
+    DeterministicReplayScheduler,
+    ReplaySchedule,
+    ReplaySchedulerCheckpoint,
+    SchedulerCheckpointError,
+    SchedulerExhaustedError,
+    calculate_replay_schedule_id,
+    calculate_replay_scheduler_checkpoint_id,
+)
 from ai_trading_scanner.simulation.validation import (
     ValidatedExecutionChain,
     select_session_bounded_next_bar,
@@ -68,6 +77,7 @@ from ai_trading_scanner.simulation.validation import (
 
 __all__ = [
     "CashLedgerSnapshot",
+    "DeterministicReplayScheduler",
     "ExecutionResolutionOutcome",
     "ExecutionResolutionPayload",
     "ExecutionResolutionReason",
@@ -89,8 +99,12 @@ __all__ = [
     "ReplayEvent",
     "ReplayPayloadKind",
     "ReplayPhase",
+    "ReplaySchedule",
+    "ReplaySchedulerCheckpoint",
     "ReplayTieBreakPolicy",
     "ResultFinalizationPayload",
+    "SchedulerCheckpointError",
+    "SchedulerExhaustedError",
     "SessionControlPayload",
     "SimulatedFill",
     "SimulatedOrder",
@@ -113,6 +127,8 @@ __all__ = [
     "calculate_realized_trade_result_id",
     "calculate_replay_artifact_id",
     "calculate_replay_event_id",
+    "calculate_replay_schedule_id",
+    "calculate_replay_scheduler_checkpoint_id",
     "calculate_replay_trace_hash",
     "calculate_simulated_fill_id",
     "calculate_simulated_order_id",

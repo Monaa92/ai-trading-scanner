@@ -1,6 +1,6 @@
 # Phase 6 independent review
 
-Status: **CHANGES REQUIRED HISTORY PRESERVED — THIRD REMEDIATION AWAITS INDEPENDENT FINAL RE-REVIEW.** Phase 6 remains IN PROGRESS.
+Status: **FOUNDATION ACCEPTED; DETERMINISTIC SCHEDULER INCREMENT AWAITS INDEPENDENT REVIEW.** Phase 6 remains IN PROGRESS.
 
 Independent review examined candidate `d56de875001ac3c18168d4efdd1f35c3f1b82ead` on branch `feat/phase-6-causal-simulation` and returned **REVIEW STATUS: CHANGES REQUIRED**. The review found that replay envelopes did not resolve or causally validate typed payloads, result summaries trusted caller-provided linkage, equivalent Decimal scales produced different Phase 6 identities, execution references were not validated across Phase 4–6 contracts, same-phase tie ordering remained caller-controlled, and several tests claimed more than they proved. No approval or merge is recorded.
 
@@ -24,8 +24,10 @@ Independent review of second-remediation candidate `bd352fa6783a45e766ec9bb73b99
 
 The third remediation keeps `SEMANTIC_PAYLOAD_V1` as the sole event-order policy and adds an explicit payload-kind dependency rank inside its semantic key. At one portfolio-update timestamp, position changes precede realized-trade records and portfolio snapshots. COMPLETE reconciliation now resolves fills, applications and checkpoints by their positions in that canonical event trace rather than timestamp comparison. Order-insensitive artifact registry tuples are canonicalized by canonical event position, with immutable identity only as a deterministic fallback for invalid or unreferenced input. Shuffled equivalent registry input therefore produces one artifact and result identity without changing Phase 1–5 identity behavior.
 
-The third-remediation workspace passes 596 tests: 480 Phase 1–5 regressions and 116 focused Phase 6 cases, including nine new equal-time/canonicalization cases. These automated results require independent final re-review before scheduler implementation begins.
+The third-remediation workspace passes 596 tests: 480 Phase 1–5 regressions and 116 focused Phase 6 cases, including nine new equal-time/canonicalization cases. Final targeted review of candidate `57dda0d39e3f75b58943f2b968dc1f1fa00371f6` classified equal-timestamp causal ordering and collection canonicalization RESOLVED, found no regression in the three previously resolved blockers, and returned **REVIEW STATUS: PASS** with the explicit result **PHASE 6 FOUNDATION ACCEPTED — SCHEDULER IMPLEMENTATION MAY BEGIN**.
 
-Still absent: the scheduler, complete replay engine, transaction-safe reservation/fill/accounting service, durable persistence or crash recovery, complete position lifecycle, four-agent experiment runner, broker/provider/network/AI integrations, PAPER and LIVE.
+The scheduler increment adds a content-identified immutable canonical schedule and a concurrency-safe in-memory cursor. It validates event envelopes through the accepted Phase 6 validator, advances exactly one position per consumption, has deterministic exhaustion, and emits immutable checkpoints bound to the schedule, run, exact consumed prefix and next event. Reconstruction from the same schedule/checkpoint resumes with the same continuation. It exposes no typed payload registry and performs no strategy, risk, order, fill, portfolio or P&L side effects. Its checkpoint is an in-memory contract, not persistence or crash recovery. The implementation workspace passes 625 tests: 480 Phase 1–5 regressions and 145 focused Phase 6 cases, of which 29 directly exercise the scheduler. These automated results do not replace independent review before this increment can be treated as accepted risk-critical Phase 6 behavior.
+
+Still absent: the complete replay engine, Phase 2–5 orchestration, transaction-safe reservation/fill/accounting service, durable persistence or crash recovery, complete position lifecycle, four-agent experiment runner, broker/provider/network/AI integrations, PAPER and LIVE.
 
 See [[06 - Testing/Phase 6 Completion Criteria]], [[06 - Testing/Backtesting]], [[00 - Project/Decisions/ADR-033 - Deterministic Phase 6 replay foundation]] and [[00 - Project/Current Status]].
