@@ -1,8 +1,8 @@
 # Current Project Status
 
-Last updated: 2026-09-14. Phases 1–5 are complete on `main`. Phase 6 foundation work is in progress on `feat/phase-6-causal-simulation`. No external order submission, external data or experiment data exists.
+Last updated: 2026-09-15. Phases 1–5 are complete on `main`. Phase 6 foundation work is in progress on `feat/phase-6-causal-simulation`. No external order submission, external data or experiment data exists.
 
-**Current phase:** Phase 6 — causal backtesting and simulation, **IN PROGRESS: SECOND-REMEDIATED CONTRACT FOUNDATION ONLY**. Immutable run manifests, typed replay artifacts, payload-aware causal validation, terminal execution-resolution linkage, same-XNYS-session next-bar selection, exact Phase 5 reservation-economics binding, pure chronological COMPLETE accounting reconciliation, Phase 4→6 execution-chain validation and canonical NDJSON serialization are implemented. Original candidate `d56de875001ac3c18168d4efdd1f35c3f1b82ead` and first remediation `61a0d434b78275236cb13f2a527abc44ed010687` each received CHANGES REQUIRED; this second remediation requires independent re-review. The scheduler, strategy/risk orchestration service, transactional fill-to-ledger transitions and durable artifact writer are not implemented.
+**Current phase:** Phase 6 — causal backtesting and simulation, **IN PROGRESS: THIRD-REMEDIATED CONTRACT FOUNDATION ONLY**. Immutable run manifests, typed replay artifacts, payload-aware causal validation, terminal execution-resolution linkage, same-XNYS-session next-bar selection, exact Phase 5 reservation-economics binding, canonical-event-ordered COMPLETE accounting reconciliation, Phase 4→6 execution-chain validation and canonical NDJSON serialization are implemented. Candidates `d56de875001ac3c18168d4efdd1f35c3f1b82ead`, `61a0d434b78275236cb13f2a527abc44ed010687` and `bd352fa6783a45e766ec9bb73b998b087517c8cd` each received CHANGES REQUIRED; this third remediation requires independent final re-review. The scheduler, strategy/risk orchestration service, transactional fill-to-ledger transitions and durable artifact writer are not implemented.
 
 | Phase | Actual status | Evidence |
 | --- | --- | --- |
@@ -24,4 +24,4 @@ Current blocker: contracts alone cannot produce an evidential run. Phase 6 still
 
 Review evidence: [[06 - Testing/Phase 2 Independent Review]], [[06 - Testing/Phase 3 Independent Review]] and [[06 - Testing/Phase 4 Independent Review]].
 
-Next recommended action: obtain independent competent re-review of the exact second Phase 6 foundation remediation. Only after approval should a separately bounded task implement the causal scheduler and ordered Phase 2 market-availability replay into Phase 3 indicators. Do not start Phase 7.
+Next recommended action: obtain independent competent final re-review of the exact third Phase 6 foundation remediation. Only after approval should a separately bounded task implement the causal scheduler and ordered Phase 2 market-availability replay into Phase 3 indicators. Do not start Phase 7.

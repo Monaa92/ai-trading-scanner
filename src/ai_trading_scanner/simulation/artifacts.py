@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -208,6 +209,49 @@ def calculate_marker_payload_id(payload: MarkerPayload | dict[str, object]) -> s
     return sha256_content_id_v2(_without_id(payload, "payload_id"))
 
 
+_ORDER_INSENSITIVE_REGISTRIES: dict[str, tuple[str, ReplayPayloadKind]] = {
+    "execution_resolutions": ("payload_id", ReplayPayloadKind.EXECUTION_RESOLUTION),
+    "session_controls": ("payload_id", ReplayPayloadKind.SESSION_CONTROL),
+    "market_events": ("market_event_id", ReplayPayloadKind.MARKET_EVENT),
+    "indicator_updates": ("payload_id", ReplayPayloadKind.INDICATOR_UPDATE),
+    "strategy_decisions": ("decision_id", ReplayPayloadKind.STRATEGY_DECISION),
+    "risk_decisions": ("risk_decision_id", ReplayPayloadKind.RISK_DECISION),
+    "orders": ("order_id", ReplayPayloadKind.SIMULATED_ORDER),
+    "fills": ("fill_id", ReplayPayloadKind.SIMULATED_FILL),
+    "position_changes": ("position_change_id", ReplayPayloadKind.POSITION_CHANGE),
+    "portfolio_snapshots": ("portfolio_snapshot_id", ReplayPayloadKind.PORTFOLIO_SNAPSHOT),
+    "realized_trades": ("realized_trade_result_id", ReplayPayloadKind.REALIZED_TRADE),
+}
+
+
+def _registry_identity(value: object, identity_field: str) -> str:
+    if isinstance(value, BaseModel):
+        return str(getattr(value, identity_field))
+    if isinstance(value, dict):
+        return str(value[identity_field])
+    raise TypeError("replay artifact registry values must be models or dictionaries")
+
+
+def _canonical_registry(
+    values: object,
+    identity_field: str,
+    payload_kind: ReplayPayloadKind,
+    event_positions: dict[tuple[ReplayPayloadKind, str], int],
+) -> tuple[object, ...]:
+    items: tuple[object, ...] = tuple(cast(Iterable[object], values))
+    return tuple(
+        sorted(
+            items,
+            key=lambda value: (
+                event_positions.get(
+                    (payload_kind, _registry_identity(value, identity_field)), len(event_positions)
+                ),
+                _registry_identity(value, identity_field),
+            ),
+        )
+    )
+
+
 class _PayloadBinding(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -242,27 +286,34 @@ class ReplayArtifactBundle(BaseModel):
     @classmethod
     def create(cls, **content: object) -> ReplayArtifactBundle:
         events: tuple[ReplayEvent, ...] = tuple(content["events"])  # type: ignore[arg-type]
-        content["events"] = order_replay_events(events)
+        ordered_events = order_replay_events(events)
+        content["events"] = ordered_events
+        event_positions = {
+            (event.payload_kind, event.payload_id): index
+            for index, event in enumerate(ordered_events)
+        }
         content.setdefault("schema_version", "replay-artifact-v2")
-        for field_name in (
-            "execution_resolutions",
-            "session_controls",
-            "market_events",
-            "indicator_updates",
-            "strategy_decisions",
-            "risk_decisions",
-            "orders",
-            "fills",
-            "position_changes",
-            "realized_trades",
-        ):
+        for field_name in _ORDER_INSENSITIVE_REGISTRIES:
             content.setdefault(field_name, ())
+        for field_name, (identity_field, payload_kind) in _ORDER_INSENSITIVE_REGISTRIES.items():
+            content[field_name] = _canonical_registry(
+                content[field_name], identity_field, payload_kind, event_positions
+            )
         return cls.model_validate({"artifact_id": calculate_replay_artifact_id(content), **content})
 
     @model_validator(mode="after")
     def validate_bundle(self) -> Self:
         if self.events != order_replay_events(self.events):
             raise ValueError("replay artifact events are not canonically ordered")
+        event_positions = {
+            (event.payload_kind, event.payload_id): index for index, event in enumerate(self.events)
+        }
+        for field_name, (identity_field, payload_kind) in _ORDER_INSENSITIVE_REGISTRIES.items():
+            values = getattr(self, field_name)
+            if values != _canonical_registry(values, identity_field, payload_kind, event_positions):
+                raise ValueError(
+                    f"replay artifact {field_name} registry is not canonically ordered"
+                )
         run_id = self.manifest.run_id
         bindings: list[_PayloadBinding] = []
 
@@ -471,6 +522,7 @@ class ReplayArtifactBundle(BaseModel):
                 raise ValueError("complete result does not reference the latest portfolio")
             reconcile_complete_portfolio(
                 self.manifest,
+                self.events,
                 self.fills,
                 self.position_changes,
                 self.portfolio_snapshots,

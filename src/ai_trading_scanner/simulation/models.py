@@ -128,6 +128,13 @@ class ReplayTieBreakPolicy(StrEnum):
     SEMANTIC_PAYLOAD_V1 = "SEMANTIC_PAYLOAD_V1"
 
 
+_SEMANTIC_PAYLOAD_KIND_RANK_V1: dict[ReplayPayloadKind, int] = {
+    ReplayPayloadKind.POSITION_CHANGE: 10,
+    ReplayPayloadKind.REALIZED_TRADE: 20,
+    ReplayPayloadKind.PORTFOLIO_SNAPSHOT: 30,
+}
+
+
 class SimulatedOrderSide(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
@@ -618,7 +625,8 @@ class ReplayEvent(BaseModel):
 
     @property
     def ordering_key(self) -> tuple[datetime, int, str]:
-        semantic_key = f"{self.payload_kind.value}:{self.payload_id}"
+        dependency_rank = _SEMANTIC_PAYLOAD_KIND_RANK_V1.get(self.payload_kind, 0)
+        semantic_key = f"{dependency_rank:03d}:{self.payload_kind.value}:{self.payload_id}"
         return (self.scheduled_at, int(self.phase), semantic_key)
 
 

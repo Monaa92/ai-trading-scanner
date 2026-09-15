@@ -1,6 +1,6 @@
 # Phase 6 independent review
 
-Status: **CHANGES REQUIRED — SECOND REMEDIATION AWAITS INDEPENDENT RE-REVIEW.** Phase 6 remains IN PROGRESS.
+Status: **CHANGES REQUIRED HISTORY PRESERVED — THIRD REMEDIATION AWAITS INDEPENDENT FINAL RE-REVIEW.** Phase 6 remains IN PROGRESS.
 
 Independent review examined candidate `d56de875001ac3c18168d4efdd1f35c3f1b82ead` on branch `feat/phase-6-causal-simulation` and returned **REVIEW STATUS: CHANGES REQUIRED**. The review found that replay envelopes did not resolve or causally validate typed payloads, result summaries trusted caller-provided linkage, equivalent Decimal scales produced different Phase 6 identities, execution references were not validated across Phase 4–6 contracts, same-phase tie ordering remained caller-controlled, and several tests claimed more than they proved. No approval or merge is recorded.
 
@@ -19,6 +19,12 @@ Phase 6 identities now use a V2 canonical Decimal representation that removes in
 A mandatory offline `ValidatedExecutionChain` reuses the Phase 4 proposal/decision and Phase 5 risk/sizing/reservation/approval contracts and binds them to the simulation manifest, frozen cost and execution configurations, simulated order, canonical dataset, next eligible same-session bar-open fill and position change. It grants no external execution authority.
 
 The second-remediation workspace passes 587 tests: 480 Phase 1–5 regressions and 107 focused Phase 6 cases. The 28 added cases include the original unchanged-portfolio and economically tiny-reservation probes; duplicate/missing/foreign fill applications; cost, net P&L, equity and realized-trade forgeries; terminal-resolution dangling/contradictory/multiple states; and regular, early-close, DST and next-session execution boundaries. Automated results do not replace independent competent human re-review.
+
+Independent review of second-remediation candidate `bd352fa6783a45e766ec9bb73b998b087517c8cd` returned **REVIEW STATUS: CHANGES REQUIRED**. Reservation economics, execution-resolution linkage and session-bounded selection were accepted as resolved. COMPLETE numerical reconciliation was only partially resolved because a same-time portfolio snapshot could sort before the position change it already reflected. The review also reproduced order-sensitive artifact identities: reversing registry tuples preserved the canonical event trace but changed the artifact identity.
+
+The third remediation keeps `SEMANTIC_PAYLOAD_V1` as the sole event-order policy and adds an explicit payload-kind dependency rank inside its semantic key. At one portfolio-update timestamp, position changes precede realized-trade records and portfolio snapshots. COMPLETE reconciliation now resolves fills, applications and checkpoints by their positions in that canonical event trace rather than timestamp comparison. Order-insensitive artifact registry tuples are canonicalized by canonical event position, with immutable identity only as a deterministic fallback for invalid or unreferenced input. Shuffled equivalent registry input therefore produces one artifact and result identity without changing Phase 1–5 identity behavior.
+
+The third-remediation workspace passes 596 tests: 480 Phase 1–5 regressions and 116 focused Phase 6 cases, including nine new equal-time/canonicalization cases. These automated results require independent final re-review before scheduler implementation begins.
 
 Still absent: the scheduler, complete replay engine, transaction-safe reservation/fill/accounting service, durable persistence or crash recovery, complete position lifecycle, four-agent experiment runner, broker/provider/network/AI integrations, PAPER and LIVE.
 

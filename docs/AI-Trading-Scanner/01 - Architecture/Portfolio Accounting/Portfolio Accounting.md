@@ -1,6 +1,6 @@
 # Portfolio accounting
 
-Status: **PARTIAL — PHASE 6 CONTRACT FOUNDATION ONLY**. `ai_trading_scanner.simulation.portfolio` implements immutable Decimal accounting records plus a pure chronological verifier that derives COMPLETE V1 state from fills and position changes. It does not operate a transactional ledger, persist state, recover after failure or implement the complete runtime position lifecycle.
+Status: **PARTIAL — PHASE 6 CONTRACT FOUNDATION ONLY**. `ai_trading_scanner.simulation.portfolio` implements immutable Decimal accounting records plus a pure verifier that derives COMPLETE V1 state from fills and position changes in canonical replay-event order. Equal-time dependencies require fill before position application and application before the resulting checkpoint. It does not operate a transactional ledger, persist state, recover after failure or implement the complete runtime position lifecycle.
 
 ## Implemented V1 boundary
 

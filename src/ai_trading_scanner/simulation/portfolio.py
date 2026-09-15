@@ -32,6 +32,7 @@ from ai_trading_scanner.domain.content_identity import sha256_content_id_v2
 
 if TYPE_CHECKING:
     from ai_trading_scanner.simulation.models import (
+        ReplayEvent,
         SimulatedFill,
         SimulationRunManifest,
     )
@@ -449,6 +450,7 @@ class _OpenPositionState:
 
 def reconcile_complete_portfolio(
     manifest: SimulationRunManifest,
+    events: tuple[ReplayEvent, ...],
     fills: tuple[SimulatedFill, ...],
     changes: tuple[PositionChange, ...],
     snapshots: tuple[PortfolioSnapshot, ...],
@@ -460,10 +462,27 @@ def reconcile_complete_portfolio(
     valuation policy marks an open position at its latest applied fill price;
     a later market valuation contract is intentionally outside this foundation.
     """
-    from ai_trading_scanner.simulation.models import SimulatedOrderSide
+    from ai_trading_scanner.simulation.models import ReplayPayloadKind, SimulatedOrderSide
+
+    event_positions = {
+        (event.payload_kind, event.payload_id): index for index, event in enumerate(events)
+    }
+
+    def event_position(kind: ReplayPayloadKind, payload_id: object) -> int:
+        try:
+            return event_positions[(kind, str(payload_id))]
+        except KeyError as exc:
+            raise ValueError(
+                "complete accounting artifact is missing a causal replay event"
+            ) from exc
 
     ordered_snapshots = tuple(
-        sorted(snapshots, key=lambda item: (item.as_of, str(item.portfolio_snapshot_id)))
+        sorted(
+            snapshots,
+            key=lambda item: event_position(
+                ReplayPayloadKind.PORTFOLIO_SNAPSHOT, item.portfolio_snapshot_id
+            ),
+        )
     )
     initial = tuple(item for item in ordered_snapshots if item.previous_snapshot_id is None)
     if len(initial) != 1 or ordered_snapshots[0] != initial[0]:
@@ -502,7 +521,12 @@ def reconcile_complete_portfolio(
         raise ValueError("complete accounting requires exactly one application per fill")
 
     ordered_changes = tuple(
-        sorted(changes, key=lambda item: (item.changed_at, str(item.position_change_id)))
+        sorted(
+            changes,
+            key=lambda item: event_position(
+                ReplayPayloadKind.POSITION_CHANGE, item.position_change_id
+            ),
+        )
     )
     open_positions: dict[InstrumentId, _OpenPositionState] = {}
     cash = manifest.starting_capital
@@ -514,6 +538,10 @@ def reconcile_complete_portfolio(
     def apply(change: PositionChange) -> None:
         nonlocal cash, realized_gross, total_costs
         fill = fill_by_id[change.fill_id]
+        if event_position(ReplayPayloadKind.SIMULATED_FILL, fill.fill_id) >= event_position(
+            ReplayPayloadKind.POSITION_CHANGE, change.position_change_id
+        ):
+            raise ValueError("position application does not causally follow its fill")
         if (
             change.run_id != fill.run_id
             or change.account_id != fill.account_id
@@ -628,8 +656,16 @@ def reconcile_complete_portfolio(
     for snapshot_index, snapshot in enumerate(ordered_snapshots):
         if snapshot_index == 0:
             continue
-        while change_index < len(ordered_changes) and (
-            ordered_changes[change_index].changed_at <= snapshot.as_of
+        snapshot_event_position = event_position(
+            ReplayPayloadKind.PORTFOLIO_SNAPSHOT, snapshot.portfolio_snapshot_id
+        )
+        while (
+            change_index < len(ordered_changes)
+            and event_position(
+                ReplayPayloadKind.POSITION_CHANGE,
+                ordered_changes[change_index].position_change_id,
+            )
+            < snapshot_event_position
         ):
             apply(ordered_changes[change_index])
             change_index += 1
