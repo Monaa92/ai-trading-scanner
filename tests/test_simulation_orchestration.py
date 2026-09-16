@@ -60,7 +60,9 @@ from ai_trading_scanner.risk import (
     RiskConfiguration,
     RiskRejectionCode,
     baseline_risk_configuration,
+    calculate_reservation_id,
     calculate_risk_configuration_id,
+    calculate_risk_decision_id,
     create_loss_state,
 )
 from ai_trading_scanner.simulation import (
@@ -96,9 +98,12 @@ from ai_trading_scanner.strategies import (
     MultiFactorConfiguration,
     NoTradeDecision,
     StrategyConfiguration,
+    StrategyEvaluationContext,
     TradeProposalDecision,
     calculate_strategy_configuration_id,
+    calculate_strategy_decision_id,
     create_management_mandate,
+    evaluate_strategy,
 )
 
 AUTHORITY = ConfigurationVersionId.parse("phase6-orchestration-tests-v1")
@@ -1083,3 +1088,212 @@ def test_generic_result_reconstruction_without_authoritative_context_is_rejected
         CausalOrchestrationResult.model_validate(result)
     assert orchestrator.validate_result(result) == result
     assert orchestrator.validate_result_json(result.model_dump_json()) == result
+
+
+def _accepted_orchestration_result(
+    suffix: str,
+) -> tuple[CausalOrchestrator, CausalOrchestrationResult]:
+    orchestrator, _, _, _ = _setup(
+        suffix,
+        configuration=_fast_proposal_configuration(),
+        bars=_fast_bars(),
+    )
+    _advance_to_proposal_boundary(orchestrator)
+    result = orchestrator.advance()
+    assert result is not None
+    assert result.outcome is OrchestrationOutcome.CAPITAL_RESERVED
+    return orchestrator, result
+
+
+def _change_latest_indicator(
+    result: CausalOrchestrationResult,
+    field: str,
+    value: Decimal,
+) -> dict[str, object]:
+    series = getattr(result.indicators, field)
+    changed_point = series.points[-1].model_copy(update={"value": value})
+    changed_series = series.model_copy(update={"points": (*series.points[:-1], changed_point)})
+    changed_indicators = result.indicators.model_copy(update={field: changed_series})
+    content = result.model_dump(mode="python")
+    content["indicators"] = changed_indicators
+    return _reidentify_result(content)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("ema_fast", Decimal("200.2")),
+        ("rsi", Decimal("12.345")),
+        ("atr", Decimal("99.999")),
+        ("session_vwap", Decimal("300.3")),
+    ),
+)
+def test_reidentified_indicator_fabrication_fails_authoritative_recomputation(
+    field: str, value: Decimal
+) -> None:
+    orchestrator, result = _accepted_orchestration_result(f"forged-{field}")
+    if field == "ema_fast":
+        assert result.indicators.ema_fast.points[-1].value == Decimal("100.2")
+    forged = _change_latest_indicator(result, field, value)
+    with pytest.raises(ValidationError, match="indicator evidence"):
+        orchestrator.validate_result(forged)
+
+
+def test_reidentified_valid_looking_strategy_decision_substitution_is_rejected() -> None:
+    orchestrator, result = _accepted_orchestration_result("forged-decision")
+    changed = result.strategy_decision.model_copy(update={"detail": "fabricated detail"})
+    changed = changed.model_copy(update={"decision_id": calculate_strategy_decision_id(changed)})
+    content = result.model_dump(mode="python")
+    content["strategy_decision"] = changed
+    _reidentify_result(content)
+    with pytest.raises(ValidationError, match="strategy decision"):
+        orchestrator.validate_result(content)
+
+
+def test_reidentified_zero_reservation_post_snapshots_are_rejected() -> None:
+    orchestrator, result = _accepted_orchestration_result("forged-zero-post")
+    assert result.risk_attempt is not None
+    before = result.risk_attempt.risk_decision.source_evaluation_state
+    content = result.model_dump(mode="python")
+    content["parent_snapshot_after"] = before.parent
+    content["allocation_snapshot_after"] = before.allocation
+    _reidentify_result(content)
+    with pytest.raises(ValidationError, match="authoritative transaction"):
+        orchestrator.validate_result(content)
+
+
+def test_reidentified_reserved_amount_inconsistent_with_sizing_is_rejected() -> None:
+    orchestrator, result = _accepted_orchestration_result("forged-reserved-amount")
+    assert result.risk_attempt is not None and result.risk_attempt.reservation is not None
+    assert result.risk_attempt.risk_decision.sizing_decision is not None
+    assert result.risk_attempt.reservation.reserved_amount == Decimal("963.768273168")
+    changed = result.risk_attempt.reservation.model_copy(update={"reserved_amount": Decimal("1")})
+    changed = changed.model_copy(update={"reservation_id": calculate_reservation_id(changed)})
+    attempt = result.risk_attempt.model_copy(update={"reservation": changed})
+    content = result.model_dump(mode="python")
+    content["risk_attempt"] = attempt
+    _reidentify_result(content)
+    with pytest.raises(ValidationError, match="authoritative transaction"):
+        orchestrator.validate_result(content)
+
+
+def test_reidentified_valid_looking_reservation_identity_is_rejected() -> None:
+    orchestrator, result = _accepted_orchestration_result("forged-reservation-id")
+    assert result.risk_attempt is not None and result.risk_attempt.reservation is not None
+    changed = result.risk_attempt.reservation.model_copy(
+        update={"expires_at": result.risk_attempt.reservation.expires_at + timedelta(seconds=1)}
+    )
+    changed = changed.model_copy(update={"reservation_id": calculate_reservation_id(changed)})
+    attempt = result.risk_attempt.model_copy(update={"reservation": changed})
+    content = result.model_dump(mode="python")
+    content["risk_attempt"] = attempt
+    _reidentify_result(content)
+    with pytest.raises(ValidationError, match="authoritative transaction"):
+        orchestrator.validate_result(content)
+
+
+def test_reidentified_post_transaction_revisions_are_rejected() -> None:
+    orchestrator, result = _accepted_orchestration_result("forged-revisions")
+    assert result.parent_snapshot_after is not None
+    assert result.allocation_snapshot_after is not None
+    content = result.model_dump(mode="python")
+    content["parent_snapshot_after"] = result.parent_snapshot_after.model_copy(
+        update={"revision": result.parent_snapshot_after.revision + 1}
+    )
+    content["allocation_snapshot_after"] = result.allocation_snapshot_after.model_copy(
+        update={"revision": result.allocation_snapshot_after.revision + 1}
+    )
+    _reidentify_result(content)
+    with pytest.raises(ValidationError, match="authoritative transaction"):
+        orchestrator.validate_result(content)
+
+
+def test_reidentified_foreign_phase5_evidence_is_rejected() -> None:
+    orchestrator, result = _accepted_orchestration_result("foreign-phase5-local")
+    _, foreign = _accepted_orchestration_result("foreign-phase5-other")
+    content = result.model_dump(mode="python")
+    content.update(
+        {
+            "risk_attempt": foreign.risk_attempt,
+            "parent_snapshot_after": foreign.parent_snapshot_after,
+            "allocation_snapshot_after": foreign.allocation_snapshot_after,
+            "outcome": foreign.outcome,
+        }
+    )
+    _reidentify_result(content)
+    with pytest.raises(ValidationError):
+        orchestrator.validate_result(content)
+
+
+def test_reidentified_accepted_status_change_is_rejected() -> None:
+    orchestrator, result = _accepted_orchestration_result("forged-status")
+    content = result.model_dump(mode="python")
+    content["outcome"] = OrchestrationOutcome.RISK_REJECTED
+    _reidentify_result(content)
+    with pytest.raises(ValidationError, match="authoritative transaction"):
+        orchestrator.validate_result(content)
+
+
+def test_reidentified_rejection_reasons_are_rejected() -> None:
+    restrictive = _risk(max_position_fraction=Decimal("0.00001"))
+    orchestrator, _, _, _ = _setup("forged-rejection-reasons", bars=_trend_bars(), risk=restrictive)
+    result = next(
+        item
+        for item in _results(orchestrator)
+        if item.outcome is OrchestrationOutcome.RISK_REJECTED
+    )
+    assert result.risk_attempt is not None
+    changed_risk = result.risk_attempt.risk_decision.model_copy(
+        update={"reason_codes": (RiskRejectionCode.TRADING_LOCK,)}
+    )
+    changed_risk = changed_risk.model_copy(
+        update={"risk_decision_id": calculate_risk_decision_id(changed_risk)}
+    )
+    changed_attempt = result.risk_attempt.model_copy(update={"risk_decision": changed_risk})
+    content = result.model_dump(mode="python")
+    content["risk_attempt"] = changed_attempt
+    _reidentify_result(content)
+    with pytest.raises(ValidationError, match="authoritative transaction"):
+        orchestrator.validate_result(content)
+
+
+@pytest.mark.parametrize("kind", ("NO_TRADE", "RISK_REJECTED", "CAPITAL_RESERVED"))
+def test_legitimate_outcome_reconstruction_remains_deterministic(kind: str) -> None:
+    if kind == "NO_TRADE":
+        orchestrator, _, _, _ = _setup("valid-rebuild-no-trade")
+        assert orchestrator.advance() is None
+        result = orchestrator.advance()
+    elif kind == "RISK_REJECTED":
+        orchestrator, _, _, _ = _setup(
+            "valid-rebuild-rejected",
+            bars=_trend_bars(),
+            risk=_risk(max_position_fraction=Decimal("0.00001")),
+        )
+        result = next(
+            item
+            for item in _results(orchestrator)
+            if item.outcome is OrchestrationOutcome.RISK_REJECTED
+        )
+    else:
+        orchestrator, result = _accepted_orchestration_result("valid-rebuild-reserved")
+    assert result is not None
+    assert orchestrator.validate_result_json(result.model_dump_json()) == result
+
+
+def test_normal_advance_evaluates_strategy_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+    original = evaluate_strategy
+
+    def counted(
+        context: StrategyEvaluationContext,
+        configuration: StrategyConfiguration,
+    ) -> NoTradeDecision | TradeProposalDecision:
+        nonlocal calls
+        calls += 1
+        return original(context, configuration)
+
+    monkeypatch.setattr("ai_trading_scanner.simulation.orchestration.evaluate_strategy", counted)
+    orchestrator, _, _, _ = _setup("single-evaluation")
+    assert orchestrator.advance() is None
+    assert orchestrator.advance() is not None
+    assert calls == 1

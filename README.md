@@ -8,9 +8,10 @@ run/events, next-eligible-bar-open order/fill contracts, versioned costs, conser
 records, deterministic trace serialization and an in-memory deterministic event scheduler. Only a
 fully validated typed replay artifact can create an executable scheduler. Process-local cursor
 authority issues current-state checkpoints and prevents in-process skip/rewind; content identity is
-not authentication and durable cross-process anti-rollback remains unimplemented. The
-fill/accounting transition engine, causal orchestration loop,
-durable artifact writer and end-to-end simulation remain unimplemented. Research baselines remain
+not authentication and durable cross-process anti-rollback remains unimplemented. A bounded
+one-event causal orchestrator evaluates the accepted Phase 3/4 contracts and Phase 5 reservation
+boundary with authoritative reconstruction checks. The fill/accounting transition engine, complete
+replay/execution loop, durable artifact writer and end-to-end simulation remain unimplemented. Research baselines remain
 unvalidated. No scanner, broker/provider/AI integration, PAPER/LIVE execution or external order
 authority exists.
 
