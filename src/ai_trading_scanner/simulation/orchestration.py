@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from threading import Lock
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from ai_trading_scanner.domain import (
     AccountId,
@@ -66,7 +67,12 @@ from ai_trading_scanner.simulation.models import (
     ReplayEvent,
     ReplayPayloadKind,
 )
-from ai_trading_scanner.simulation.scheduler import DeterministicReplayScheduler
+from ai_trading_scanner.simulation.scheduler import (
+    DeterministicReplayScheduler,
+    ReplaySchedule,
+    _LeasedSchedulerTransition,
+    _OrchestrationSchedulerLease,
+)
 from ai_trading_scanner.strategies import (
     IndicatorSnapshot,
     NoTradeDecision,
@@ -88,6 +94,35 @@ class OrchestrationOutcome(StrEnum):
     NO_TRADE = "NO_TRADE"
     RISK_REJECTED = "RISK_REJECTED"
     CAPITAL_RESERVED = "CAPITAL_RESERVED"
+
+
+class OrchestrationSchedulerView(BaseModel):
+    """Read-only inspection of an orchestration-owned scheduler cursor."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schedule: ReplaySchedule
+    position: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+    has_events: bool
+    exhausted: bool
+    published_result_ids: tuple[OrchestrationResultId, ...]
+
+    @property
+    def schedule_id(self) -> ReplayScheduleId:
+        return self.schedule.schedule_id
+
+    @property
+    def run_id(self) -> SimulationRunId:
+        return self.schedule.run_id
+
+    @model_validator(mode="after")
+    def validate_view(self) -> Self:
+        if self.position + self.remaining != len(self.schedule.events):
+            raise ValueError("orchestration scheduler view has inconsistent position")
+        if self.has_events != (self.remaining > 0) or self.exhausted == self.has_events:
+            raise ValueError("orchestration scheduler view has inconsistent exhaustion")
+        return self
 
 
 def _without_id(value: BaseModel | dict[str, object], field: str) -> dict[str, object]:
@@ -119,10 +154,20 @@ def calculate_orchestration_configuration_id(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _OrchestrationResultBinding:
+    artifact: ReplayArtifactBundle
+    schedule: ReplaySchedule
+    strategy_configuration: StrategyConfiguration
+    risk_configuration: RiskConfiguration
+    cost_estimate: RoundTripCostEstimate
+    orchestration_configuration_id: OrchestrationConfigurationId
+
+
 class CausalOrchestrationResult(BaseModel):
     """Immutable evidence for one market-release-driven strategy evaluation."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", revalidate_instances="always")
 
     orchestration_result_id: OrchestrationResultId
     schema_version: Literal["causal-orchestration-result-v1"] = "causal-orchestration-result-v1"
@@ -158,15 +203,95 @@ class CausalOrchestrationResult(BaseModel):
     evaluated_at: datetime
 
     @classmethod
-    def create(cls, **content: object) -> CausalOrchestrationResult:
+    def create_bound(
+        cls,
+        *,
+        artifact: ReplayArtifactBundle,
+        schedule: ReplaySchedule,
+        strategy_configuration: StrategyConfiguration,
+        risk_configuration: RiskConfiguration,
+        cost_estimate: RoundTripCostEstimate,
+        **content: object,
+    ) -> CausalOrchestrationResult:
+        """Create evidence only from its fully validated authoritative context."""
+        binding = _result_binding(
+            artifact=artifact,
+            schedule=schedule,
+            strategy_configuration=strategy_configuration,
+            risk_configuration=risk_configuration,
+            cost_estimate=cost_estimate,
+        )
+        manifest = binding.artifact.manifest
+        content.update(
+            {
+                "artifact_id": binding.artifact.artifact_id,
+                "orchestration_configuration_id": binding.orchestration_configuration_id,
+                "run_id": manifest.run_id,
+                "dataset_id": manifest.dataset_id,
+                "account_id": manifest.account_id,
+                "allocation_id": manifest.allocation_id,
+                "agent_id": manifest.agent_id,
+                "strategy_id": manifest.strategy_id,
+                "strategy_configuration_id": manifest.strategy_configuration_id,
+                "indicator_configuration_ids": manifest.indicator_configuration_ids,
+                "risk_configuration_id": manifest.risk_configuration_id,
+                "configuration_version_id": manifest.configuration_version_id,
+                "cost_model_id": manifest.cost_model_id,
+                "cost_methodology_version_id": binding.cost_estimate.methodology_version_id,
+                "execution_dimensions": manifest.execution_dimensions,
+                "schedule_id": binding.schedule.schedule_id,
+            }
+        )
         content.setdefault("schema_version", "causal-orchestration-result-v1")
         content["causal_parent_ids"] = _causal_parent_ids(content)
         return cls.model_validate(
             {
                 "orchestration_result_id": calculate_orchestration_result_id(content),
                 **content,
-            }
+            },
+            context={"orchestration_binding": binding},
         )
+
+    @classmethod
+    def validate_bound(
+        cls,
+        value: object,
+        *,
+        artifact: ReplayArtifactBundle,
+        schedule: ReplaySchedule,
+        strategy_configuration: StrategyConfiguration,
+        risk_configuration: RiskConfiguration,
+        cost_estimate: RoundTripCostEstimate,
+    ) -> CausalOrchestrationResult:
+        """Reconstruct evidence only while rechecking its authoritative sources."""
+        binding = _result_binding(
+            artifact=artifact,
+            schedule=schedule,
+            strategy_configuration=strategy_configuration,
+            risk_configuration=risk_configuration,
+            cost_estimate=cost_estimate,
+        )
+        return cls.model_validate(value, context={"orchestration_binding": binding})
+
+    @classmethod
+    def validate_bound_json(
+        cls,
+        value: str | bytes | bytearray,
+        *,
+        artifact: ReplayArtifactBundle,
+        schedule: ReplaySchedule,
+        strategy_configuration: StrategyConfiguration,
+        risk_configuration: RiskConfiguration,
+        cost_estimate: RoundTripCostEstimate,
+    ) -> CausalOrchestrationResult:
+        binding = _result_binding(
+            artifact=artifact,
+            schedule=schedule,
+            strategy_configuration=strategy_configuration,
+            risk_configuration=risk_configuration,
+            cost_estimate=cost_estimate,
+        )
+        return cls.model_validate_json(value, context={"orchestration_binding": binding})
 
     @field_validator("evaluated_at")
     @classmethod
@@ -176,20 +301,40 @@ class CausalOrchestrationResult(BaseModel):
         return value.astimezone(UTC)
 
     @model_validator(mode="after")
-    def validate_evidence(self) -> Self:
+    def validate_evidence(self, info: ValidationInfo) -> Self:
+        binding = (info.context or {}).get("orchestration_binding")
+        if not isinstance(binding, _OrchestrationResultBinding):
+            raise ValueError("authoritative orchestration context is required")
         event = self.triggering_event
         market = self.triggering_market_event
         decision = self.strategy_decision
+        schedule = binding.schedule
+        artifact = binding.artifact
+        manifest = artifact.manifest
+        if ReplaySchedule.from_artifact(artifact) != schedule:
+            raise ValueError("orchestration schedule is not derived from the artifact")
+        if self.scheduler_event_position >= len(schedule.events):
+            raise ValueError("orchestration scheduler position is outside the schedule")
+        expected_event = schedule.events[self.scheduler_event_position]
+        market_by_id = {str(item.market_event_id): item for item in artifact.market_events}
+        expected_released = tuple(
+            market_by_id[item.payload_id]
+            for item in schedule.events[: self.scheduler_position_after]
+            if item.payload_kind is ReplayPayloadKind.MARKET_EVENT
+        )
         if self.scheduler_position_after != self.scheduler_event_position + 1:
             raise ValueError("orchestration scheduler positions must advance exactly once")
         if (
-            event.run_id != self.run_id
+            event != expected_event
+            or event.run_id != self.run_id
             or str(event.replay_event_id) not in self.causal_parent_ids
             or event.payload_kind is not ReplayPayloadKind.MARKET_EVENT
             or event.payload_id != str(market.market_event_id)
             or event.scheduled_at != market.available_at
         ):
             raise ValueError("triggering scheduler and market evidence are inconsistent")
+        if self.released_market_events != expected_released:
+            raise ValueError("released market evidence is not the exact consumed schedule prefix")
         if not self.released_market_events or self.released_market_events[-1] != market:
             raise ValueError("triggering market event must be the newest released evidence")
         released_ids = tuple(str(item.market_event_id) for item in self.released_market_events)
@@ -210,9 +355,26 @@ class CausalOrchestrationResult(BaseModel):
         ):
             raise ValueError("strategy market slice hash does not match visible bars")
         if (
-            self.market_data.dataset_id != self.dataset_id
+            self.artifact_id != artifact.artifact_id
+            or self.schedule_id != schedule.schedule_id
+            or self.orchestration_configuration_id != binding.orchestration_configuration_id
+            or self.run_id != manifest.run_id
+            or self.dataset_id != manifest.dataset_id
+            or self.account_id != manifest.account_id
+            or self.allocation_id != manifest.allocation_id
+            or self.agent_id != manifest.agent_id
+            or self.strategy_id != manifest.strategy_id
+            or self.strategy_configuration_id != manifest.strategy_configuration_id
+            or self.indicator_configuration_ids != manifest.indicator_configuration_ids
+            or self.risk_configuration_id != manifest.risk_configuration_id
+            or self.configuration_version_id != manifest.configuration_version_id
+            or self.cost_model_id != manifest.cost_model_id
+            or self.cost_methodology_version_id != binding.cost_estimate.methodology_version_id
+            or self.execution_dimensions != manifest.execution_dimensions
+            or self.market_data.dataset_id != self.dataset_id
             or market.dataset_id != self.dataset_id
-            or market.instrument_id not in {bar.instrument_id for bar in self.market_data.bars}
+            or _market_reference_key(market)
+            not in {_bar_reference_key(bar) for bar in self.market_data.bars}
             or self.evaluated_at != event.scheduled_at
             or decision.as_of != self.evaluated_at
             or decision.agent_id != self.agent_id
@@ -272,6 +434,8 @@ class CausalOrchestrationResult(BaseModel):
                 or self.risk_attempt.reservation is None
             ):
                 raise ValueError("capital-reserved outcome requires reservation evidence")
+            if decision.proposal.economics.cost_estimate != binding.cost_estimate:
+                raise ValueError("proposal cost evidence differs from orchestration context")
         if self.causal_parent_ids != _causal_parent_ids(self.model_dump(mode="python")):
             raise ValueError("causal parent identities do not match bound evidence")
         if self.orchestration_result_id != calculate_orchestration_result_id(self):
@@ -319,6 +483,55 @@ def calculate_orchestration_result_id(
     )
 
 
+def _result_binding(
+    *,
+    artifact: ReplayArtifactBundle,
+    schedule: ReplaySchedule,
+    strategy_configuration: StrategyConfiguration,
+    risk_configuration: RiskConfiguration,
+    cost_estimate: RoundTripCostEstimate,
+) -> _OrchestrationResultBinding:
+    """Rebuild and cross-check every authoritative result dependency."""
+    validated_artifact = ReplayArtifactBundle.model_validate(artifact.model_dump(mode="python"))
+    validated_schedule = ReplaySchedule.model_validate(schedule.model_dump(mode="python"))
+    strategy_type = type(strategy_configuration)
+    validated_strategy = strategy_type.model_validate(
+        strategy_configuration.model_dump(mode="python")
+    )
+    validated_risk = RiskConfiguration.model_validate(risk_configuration.model_dump(mode="python"))
+    validated_cost = RoundTripCostEstimate.model_validate(cost_estimate.model_dump(mode="python"))
+    manifest = validated_artifact.manifest
+    if ReplaySchedule.from_artifact(validated_artifact) != validated_schedule:
+        raise OrchestrationInvariantError("schedule is not derived from the authoritative artifact")
+    if (
+        calculate_strategy_configuration_id(validated_strategy)
+        != manifest.strategy_configuration_id
+        or validated_strategy.strategy_id != manifest.strategy_id
+        or validated_strategy.strategy_version != manifest.strategy_version
+        or _indicator_snapshot_configuration_ids(validated_strategy)
+        != manifest.indicator_configuration_ids
+        or validated_risk.risk_configuration_id != manifest.risk_configuration_id
+        or validated_risk.authority_configuration_version_id != manifest.configuration_version_id
+    ):
+        raise OrchestrationInvariantError(
+            "result binding strategy, indicator, risk, or authority differs from manifest"
+        )
+    configuration_id = calculate_orchestration_configuration_id(
+        strategy_configuration=validated_strategy,
+        risk_configuration=validated_risk,
+        cost_estimate=validated_cost,
+        artifact=validated_artifact,
+    )
+    return _OrchestrationResultBinding(
+        artifact=validated_artifact,
+        schedule=validated_schedule,
+        strategy_configuration=validated_strategy,
+        risk_configuration=validated_risk,
+        cost_estimate=validated_cost,
+        orchestration_configuration_id=configuration_id,
+    )
+
+
 def _market_reference_key(reference: MarketEventReference) -> tuple[object, ...]:
     return (
         reference.instrument_id,
@@ -343,6 +556,8 @@ def _bar_reference_key(bar: HistoricalBar) -> tuple[object, ...]:
 class _OrchestrationCursorState:
     configuration_id: OrchestrationConfigurationId
     coordinator: InMemoryCapitalCoordinator
+    scheduler_lease: _OrchestrationSchedulerLease
+    published_results: dict[int, CausalOrchestrationResult]
     lock: Lock
 
 
@@ -351,16 +566,19 @@ _ORCHESTRATION_CURSOR_STATES_LOCK = Lock()
 
 
 def _orchestration_state_for(
-    schedule_id: ReplayScheduleId,
+    scheduler: DeterministicReplayScheduler,
     configuration_id: OrchestrationConfigurationId,
     coordinator: InMemoryCapitalCoordinator,
 ) -> _OrchestrationCursorState:
     with _ORCHESTRATION_CURSOR_STATES_LOCK:
+        schedule_id = scheduler.schedule_id
         state = _ORCHESTRATION_CURSOR_STATES.get(schedule_id)
         if state is None:
             state = _OrchestrationCursorState(
                 configuration_id=configuration_id,
                 coordinator=coordinator,
+                scheduler_lease=scheduler._lease_for_orchestration(),
+                published_results={},
                 lock=Lock(),
             )
             _ORCHESTRATION_CURSOR_STATES[schedule_id] = state
@@ -457,7 +675,7 @@ class CausalOrchestrator:
         self._risk_engine = RiskEngine()
         self._market_by_id = market_by_id
         self._bar_by_market_id = bar_by_market_id
-        self._scheduler = DeterministicReplayScheduler.from_artifact(validated_artifact)
+        scheduler = DeterministicReplayScheduler.from_artifact(validated_artifact)
         self._configuration_id = calculate_orchestration_configuration_id(
             strategy_configuration=validated_strategy,
             risk_configuration=validated_risk,
@@ -465,143 +683,250 @@ class CausalOrchestrator:
             artifact=validated_artifact,
         )
         self._state = _orchestration_state_for(
-            self._scheduler.schedule_id,
+            scheduler,
             self._configuration_id,
             capital_coordinator,
         )
+        self._failure_injector: Callable[[str], None] | None = None
 
     @property
-    def scheduler(self) -> DeterministicReplayScheduler:
-        return self._scheduler
+    def scheduler(self) -> OrchestrationSchedulerView:
+        """Return immutable cursor status without exposing advancement authority."""
+        with self._state.lock:
+            position, _ = self._state.scheduler_lease.inspect()
+            remaining = len(self._state.scheduler_lease.schedule.events) - position
+            return OrchestrationSchedulerView(
+                schedule=self._state.scheduler_lease.schedule,
+                position=position,
+                remaining=remaining,
+                has_events=remaining > 0,
+                exhausted=remaining == 0,
+                published_result_ids=tuple(
+                    self._state.published_results[index].orchestration_result_id
+                    for index in sorted(self._state.published_results)
+                ),
+            )
 
     @property
     def released_market_events(self) -> tuple[MarketEventReference, ...]:
         with self._state.lock:
-            return self._released_prefix()
+            position, _ = self._state.scheduler_lease.inspect()
+            return self._released_prefix(position)
+
+    def validate_result(self, value: object) -> CausalOrchestrationResult:
+        """Validate reconstructed evidence against this orchestrator's frozen inputs."""
+        return CausalOrchestrationResult.validate_bound(
+            value,
+            artifact=self._artifact,
+            schedule=self._state.scheduler_lease.schedule,
+            strategy_configuration=self._strategy_configuration,
+            risk_configuration=self._risk_configuration,
+            cost_estimate=self._cost_estimate,
+        )
+
+    def validate_result_json(self, value: str | bytes | bytearray) -> CausalOrchestrationResult:
+        return CausalOrchestrationResult.validate_bound_json(
+            value,
+            artifact=self._artifact,
+            schedule=self._state.scheduler_lease.schedule,
+            strategy_configuration=self._strategy_configuration,
+            risk_configuration=self._risk_configuration,
+            cost_estimate=self._cost_estimate,
+        )
+
+    def _inject_failure(self, stage: str) -> None:
+        if self._failure_injector is not None:
+            self._failure_injector(stage)
 
     def advance(self) -> CausalOrchestrationResult | None:
-        """Consume exactly one authorized event; evaluate only MARKET_EVENT payloads."""
+        """Atomically consume one event and publish all-or-nothing causal effects."""
         with self._state.lock:
-            event_position = self._scheduler.position
-            event = self._scheduler.next_event()
-            if event.payload_kind is not ReplayPayloadKind.MARKET_EVENT:
-                return None
-            reference = self._market_by_id.get(event.payload_id)
-            if reference is None:
-                raise OrchestrationInvariantError(
-                    "scheduled market dependency is absent from the validated registry"
-                )
-            bar = self._bar_by_market_id.get(event.payload_id)
-            if bar is None:
-                raise OrchestrationInvariantError(
-                    "scheduled market dependency is absent from the canonical dataset"
-                )
-            released_market_events = self._released_prefix()
-            if self._scheduler.position != event_position + 1:
-                raise OrchestrationInvariantError(
-                    "scheduler advanced concurrently outside this orchestration step"
-                )
-            if not released_market_events or released_market_events[-1] != reference:
-                raise OrchestrationInvariantError(
-                    "scheduler consumed prefix does not end with the triggering market event"
-                )
-            market_data = self._visible_slice(
-                reference,
-                bar,
-                event.scheduled_at,
-                released_market_events,
+            event_position: int | None = None
+            try:
+                with self._state.scheduler_lease.transition() as transition:
+                    event_position = transition.position_before
+                    event = transition.event
+                    self._inject_failure("after_event_inspection")
+                    if event.payload_kind is not ReplayPayloadKind.MARKET_EVENT:
+                        self._inject_failure("immediately_before_commit")
+                        transition.commit()
+                        self._inject_failure("during_commit_after_cursor")
+                        return None
+                    return self._evaluate_market_event(transition)
+            except BaseException:
+                if event_position is not None:
+                    dict.pop(self._state.published_results, event_position, None)
+                raise
+
+    def _evaluate_market_event(
+        self, transition: _LeasedSchedulerTransition
+    ) -> CausalOrchestrationResult:
+        event = transition.event
+        reference = self._market_by_id.get(event.payload_id)
+        if reference is None:
+            raise OrchestrationInvariantError(
+                "scheduled market dependency is absent from the validated registry"
             )
-            indicators = _indicator_snapshot(market_data, self._strategy_configuration)
-            manifest = self._artifact.manifest
-            context = StrategyEvaluationContext(
-                agent_id=manifest.agent_id,
-                strategy_id=manifest.strategy_id,
-                strategy_configuration_id=manifest.strategy_configuration_id,
-                instrument_id=reference.instrument_id,
-                as_of=event.scheduled_at,
-                market_data=market_data,
-                indicators=indicators,
-                cost_estimate=self._cost_estimate,
-                authority_context=ProposalAuthorityContext(
-                    configuration_version_id=manifest.configuration_version_id,
-                    execution_dimensions=manifest.execution_dimensions,
+        bar = self._bar_by_market_id.get(event.payload_id)
+        if bar is None:
+            raise OrchestrationInvariantError(
+                "scheduled market dependency is absent from the canonical dataset"
+            )
+        self._inject_failure("during_visibility_resolution")
+        released_market_events = self._released_prefix(transition.position_after)
+        if not released_market_events or released_market_events[-1] != reference:
+            raise OrchestrationInvariantError(
+                "scheduler consumed prefix does not end with the triggering market event"
+            )
+        market_data = self._visible_slice(
+            reference, bar, event.scheduled_at, released_market_events
+        )
+        self._inject_failure("during_indicator_calculation")
+        indicators = _indicator_snapshot(market_data, self._strategy_configuration)
+        manifest = self._artifact.manifest
+        context = StrategyEvaluationContext(
+            agent_id=manifest.agent_id,
+            strategy_id=manifest.strategy_id,
+            strategy_configuration_id=manifest.strategy_configuration_id,
+            instrument_id=reference.instrument_id,
+            as_of=event.scheduled_at,
+            market_data=market_data,
+            indicators=indicators,
+            cost_estimate=self._cost_estimate,
+            authority_context=ProposalAuthorityContext(
+                configuration_version_id=manifest.configuration_version_id,
+                execution_dimensions=manifest.execution_dimensions,
+            ),
+        )
+        self._inject_failure("during_strategy_evaluation")
+        decision = evaluate_strategy(context, self._strategy_configuration)
+        if isinstance(decision, NoTradeDecision):
+            return self._publish_result(
+                transition,
+                self._build_result(
+                    transition=transition,
+                    reference=reference,
+                    released_market_events=released_market_events,
+                    market_data=market_data,
+                    indicators=indicators,
+                    decision=decision,
+                    risk_attempt=None,
+                    parent_after=None,
+                    allocation_after=None,
+                    outcome=OrchestrationOutcome.NO_TRADE,
                 ),
             )
-            decision = evaluate_strategy(context, self._strategy_configuration)
-            risk_attempt: ReservationAttempt | None = None
-            parent_after: ParentCapitalSnapshot | None = None
-            allocation_after: AllocationSnapshot | None = None
-            if isinstance(decision, NoTradeDecision):
-                outcome = OrchestrationOutcome.NO_TRADE
-            else:
-                if (
-                    decision.proposal.management_mandate.mandate_id
-                    != manifest.management_mandate_id
-                ):
-                    raise OrchestrationInvariantError(
-                        "proposal management mandate differs from run manifest"
-                    )
-                state = self._coordinator.evaluation_state(
-                    manifest.account_id, manifest.allocation_id
+        if decision.proposal.management_mandate.mandate_id != manifest.management_mandate_id:
+            raise OrchestrationInvariantError(
+                "proposal management mandate differs from run manifest"
+            )
+        self._inject_failure("during_risk_evaluation")
+        state = self._coordinator.evaluation_state(manifest.account_id, manifest.allocation_id)
+        preliminary = self._risk_engine.evaluate(
+            decision.proposal,
+            self._risk_configuration,
+            state,
+            evaluated_at=event.scheduled_at,
+        )
+        with self._coordinator.orchestration_transaction(
+            decision.proposal,
+            account_id=manifest.account_id,
+            allocation_id=manifest.allocation_id,
+        ):
+            if preliminary.status is RiskDecisionStatus.REJECTED:
+                risk_attempt = ReservationAttempt(
+                    status=ReservationAttemptStatus.REJECTED,
+                    risk_decision=preliminary,
                 )
-                preliminary = self._risk_engine.evaluate(
+            else:
+                self._inject_failure("during_sizing_allocation")
+                risk_attempt = self._coordinator.reserve(
                     decision.proposal,
                     self._risk_configuration,
-                    state,
+                    preliminary,
+                    account_id=manifest.account_id,
+                    allocation_id=manifest.allocation_id,
                     evaluated_at=event.scheduled_at,
                 )
-                if preliminary.status is RiskDecisionStatus.REJECTED:
-                    risk_attempt = ReservationAttempt(
-                        status=ReservationAttemptStatus.REJECTED,
-                        risk_decision=preliminary,
-                    )
-                else:
-                    risk_attempt = self._coordinator.reserve(
-                        decision.proposal,
-                        self._risk_configuration,
-                        preliminary,
-                        account_id=manifest.account_id,
-                        allocation_id=manifest.allocation_id,
-                        evaluated_at=event.scheduled_at,
-                    )
-                parent_after = self._coordinator.parent_snapshot(manifest.account_id)
-                allocation_after = self._coordinator.allocation_snapshot(manifest.allocation_id)
-                outcome = (
-                    OrchestrationOutcome.CAPITAL_RESERVED
-                    if risk_attempt.status is ReservationAttemptStatus.RESERVED
-                    else OrchestrationOutcome.RISK_REJECTED
-                )
-            return CausalOrchestrationResult.create(
-                artifact_id=self._artifact.artifact_id,
-                orchestration_configuration_id=self._configuration_id,
-                run_id=manifest.run_id,
-                dataset_id=manifest.dataset_id,
-                account_id=manifest.account_id,
-                allocation_id=manifest.allocation_id,
-                agent_id=manifest.agent_id,
-                strategy_id=manifest.strategy_id,
-                strategy_configuration_id=manifest.strategy_configuration_id,
-                indicator_configuration_ids=manifest.indicator_configuration_ids,
-                risk_configuration_id=manifest.risk_configuration_id,
-                configuration_version_id=manifest.configuration_version_id,
-                cost_model_id=manifest.cost_model_id,
-                cost_methodology_version_id=self._cost_estimate.methodology_version_id,
-                execution_dimensions=manifest.execution_dimensions,
-                schedule_id=self._scheduler.schedule_id,
-                scheduler_event_position=event_position,
-                scheduler_position_after=self._scheduler.position,
-                triggering_event=event,
-                triggering_market_event=reference,
-                released_market_events=released_market_events,
-                market_data=market_data,
-                indicators=indicators,
-                strategy_decision=decision,
-                risk_attempt=risk_attempt,
-                parent_snapshot_after=parent_after,
-                allocation_snapshot_after=allocation_after,
-                outcome=outcome,
-                evaluated_at=event.scheduled_at,
+                self._inject_failure("after_reservation_mutation")
+            self._inject_failure("during_capital_snapshot")
+            parent_after = self._coordinator.parent_snapshot(manifest.account_id)
+            allocation_after = self._coordinator.allocation_snapshot(manifest.allocation_id)
+            outcome = (
+                OrchestrationOutcome.CAPITAL_RESERVED
+                if risk_attempt.status is ReservationAttemptStatus.RESERVED
+                else OrchestrationOutcome.RISK_REJECTED
             )
+            return self._publish_result(
+                transition,
+                self._build_result(
+                    transition=transition,
+                    reference=reference,
+                    released_market_events=released_market_events,
+                    market_data=market_data,
+                    indicators=indicators,
+                    decision=decision,
+                    risk_attempt=risk_attempt,
+                    parent_after=parent_after,
+                    allocation_after=allocation_after,
+                    outcome=outcome,
+                ),
+            )
+
+    def _publish_result(
+        self,
+        transition: _LeasedSchedulerTransition,
+        result: CausalOrchestrationResult,
+    ) -> CausalOrchestrationResult:
+        position = transition.position_before
+        if position in self._state.published_results:
+            raise OrchestrationInvariantError(
+                "scheduler position already has a published orchestration result"
+            )
+        self._inject_failure("immediately_before_commit")
+        self._state.published_results[position] = result
+        self._inject_failure("during_commit_after_result")
+        transition.commit()
+        self._inject_failure("during_commit_after_cursor")
+        return result
+
+    def _build_result(
+        self,
+        *,
+        transition: _LeasedSchedulerTransition,
+        reference: MarketEventReference,
+        released_market_events: tuple[MarketEventReference, ...],
+        market_data: MarketDataSlice,
+        indicators: IndicatorSnapshot,
+        decision: NoTradeDecision | TradeProposalDecision,
+        risk_attempt: ReservationAttempt | None,
+        parent_after: ParentCapitalSnapshot | None,
+        allocation_after: AllocationSnapshot | None,
+        outcome: OrchestrationOutcome,
+    ) -> CausalOrchestrationResult:
+        self._inject_failure("during_result_construction")
+        result = CausalOrchestrationResult.create_bound(
+            artifact=self._artifact,
+            schedule=self._state.scheduler_lease.schedule,
+            strategy_configuration=self._strategy_configuration,
+            risk_configuration=self._risk_configuration,
+            cost_estimate=self._cost_estimate,
+            scheduler_event_position=transition.position_before,
+            scheduler_position_after=transition.position_after,
+            triggering_event=transition.event,
+            triggering_market_event=reference,
+            released_market_events=released_market_events,
+            market_data=market_data,
+            indicators=indicators,
+            strategy_decision=decision,
+            risk_attempt=risk_attempt,
+            parent_snapshot_after=parent_after,
+            allocation_snapshot_after=allocation_after,
+            outcome=outcome,
+            evaluated_at=transition.event.scheduled_at,
+        )
+        self._inject_failure("during_result_validation")
+        return self.validate_result(result.model_dump(mode="python"))
 
     def _visible_slice(
         self,
@@ -647,9 +972,9 @@ class CausalOrchestrator:
             quality_findings=visible_findings,
         )
 
-    def _released_prefix(self) -> tuple[MarketEventReference, ...]:
+    def _released_prefix(self, position: int) -> tuple[MarketEventReference, ...]:
         released: list[MarketEventReference] = []
-        for event in self._scheduler.schedule.events[: self._scheduler.position]:
+        for event in self._state.scheduler_lease.schedule.events[:position]:
             if event.payload_kind is not ReplayPayloadKind.MARKET_EVENT:
                 continue
             reference = self._market_by_id.get(event.payload_id)

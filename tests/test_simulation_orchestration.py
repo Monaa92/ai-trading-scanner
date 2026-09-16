@@ -8,9 +8,11 @@ import random
 import subprocess
 import sys
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from threading import Event
 
 import pytest
 from pydantic import ValidationError
@@ -65,6 +67,7 @@ from ai_trading_scanner.simulation import (
     CashLedgerSnapshot,
     CausalOrchestrationResult,
     CausalOrchestrator,
+    DeterministicReplayScheduler,
     MarketEventReference,
     OrchestrationInvariantError,
     OrchestrationOutcome,
@@ -73,6 +76,7 @@ from ai_trading_scanner.simulation import (
     ReplayPhase,
     ResultFinalizationPayload,
     SchedulerExhaustedError,
+    SchedulerLeaseError,
     SimulationResultStatus,
     SimulationRunManifest,
     calculate_marker_payload_id,
@@ -82,6 +86,7 @@ from ai_trading_scanner.simulation import (
     calculate_replay_event_id,
     calculate_simulation_run_id,
 )
+from ai_trading_scanner.simulation.orchestration import _causal_parent_ids
 from ai_trading_scanner.strategies import (
     BreakoutConfiguration,
     ManagementStyle,
@@ -433,7 +438,7 @@ def test_strategy_cannot_reference_future_market_data() -> None:
     content = result.model_dump(mode="python")
     content["market_data"] = forged_slice
     with pytest.raises(ValidationError, match="unreleased data"):
-        CausalOrchestrationResult.model_validate(content)
+        orchestrator.validate_result(content)
 
 
 def test_current_released_bar_is_visible_and_is_the_trigger() -> None:
@@ -464,7 +469,7 @@ def test_repeated_content_identity_calculation_is_identical() -> None:
     result = orchestrator.advance()
     assert result is not None
     assert calculate_orchestration_result_id(result) == calculate_orchestration_result_id(result)
-    assert CausalOrchestrationResult.model_validate_json(result.model_dump_json()) == result
+    assert orchestrator.validate_result_json(result.model_dump_json()) == result
 
 
 def test_no_trade_is_first_class_and_skips_phase5_mutation() -> None:
@@ -537,7 +542,7 @@ def test_wrong_run_evidence_is_rejected() -> None:
     content = result.model_dump(mode="python")
     content["run_id"] = "sha256:" + "f" * 64
     with pytest.raises(ValidationError, match="scheduler and market evidence"):
-        CausalOrchestrationResult.model_validate(content)
+        orchestrator.validate_result(content)
 
 
 def test_wrong_agent_evidence_is_rejected() -> None:
@@ -548,7 +553,7 @@ def test_wrong_agent_evidence_is_rejected() -> None:
     content = result.model_dump(mode="python")
     content["agent_id"] = "agent:foreign"
     with pytest.raises(ValidationError, match="visible causal evidence"):
-        CausalOrchestrationResult.model_validate(content)
+        orchestrator.validate_result(content)
 
 
 def test_foreign_allocation_is_rejected_before_scheduler_creation() -> None:
@@ -599,7 +604,7 @@ def test_strategy_decision_cannot_claim_unseen_slice_hash() -> None:
     content = result.model_dump(mode="python")
     content["strategy_decision"] = decision
     with pytest.raises(ValidationError, match="strategy decision identity"):
-        CausalOrchestrationResult.model_validate(content)
+        orchestrator.validate_result(content)
 
 
 def test_four_strategies_receive_identical_normalized_information() -> None:
@@ -697,7 +702,7 @@ def test_semantically_identical_result_reconstruction_is_byte_identical() -> Non
     result = orchestrator.advance()
     assert result is not None
     encoded = result.model_dump_json()
-    reconstructed = CausalOrchestrationResult.model_validate_json(encoded)
+    reconstructed = orchestrator.validate_result_json(encoded)
     assert reconstructed.model_dump_json() == encoded
     assert reconstructed.orchestration_result_id == result.orchestration_result_id
 
@@ -773,3 +778,308 @@ def test_same_input_repeats_identically_in_fresh_processes() -> None:
         cwd=test_path.parent,
     ).stdout.strip()
     assert first == second
+
+
+def _fast_proposal_configuration() -> MultiFactorConfiguration:
+    return MultiFactorConfiguration(
+        ema_fast_period=1,
+        ema_medium_period=2,
+        ema_slow_period=3,
+        rsi_period=2,
+        atr_period=2,
+        minimum_combined_score=Decimal("0.5"),
+    )
+
+
+def _fast_bars() -> tuple[HistoricalBar, ...]:
+    return strategy_bars(("100", "100.1", "100.2", "100.3", "100.4", "100.5"))
+
+
+def _advance_to_proposal_boundary(orchestrator: CausalOrchestrator) -> None:
+    while orchestrator.scheduler.position < 3:
+        orchestrator.advance()
+    assert orchestrator.scheduler.position == 3
+
+
+def _atomic_state(
+    orchestrator: CausalOrchestrator,
+    coordinator: InMemoryCapitalCoordinator,
+) -> tuple[object, ...]:
+    manifest = orchestrator.scheduler.schedule.run_id
+    account_id = AccountId.parse(str(orchestrator._artifact.manifest.account_id))
+    allocation_id = AllocationId.parse(str(orchestrator._artifact.manifest.allocation_id))
+    return (
+        manifest,
+        orchestrator.scheduler.position,
+        orchestrator.released_market_events,
+        orchestrator.scheduler.published_result_ids,
+        coordinator.parent_snapshot(account_id),
+        coordinator.allocation_snapshot(allocation_id),
+        tuple(sorted((str(key), value) for key, value in coordinator._reservations.items())),
+        tuple(sorted((str(key), value) for key, value in coordinator._risk_decisions.items())),
+    )
+
+
+PROPOSAL_FAILURE_STAGES = (
+    "after_event_inspection",
+    "during_visibility_resolution",
+    "during_indicator_calculation",
+    "during_strategy_evaluation",
+    "during_risk_evaluation",
+    "during_sizing_allocation",
+    "after_reservation_mutation",
+    "during_capital_snapshot",
+    "during_result_construction",
+    "during_result_validation",
+    "immediately_before_commit",
+    "during_commit_after_result",
+    "during_commit_after_cursor",
+)
+
+
+@pytest.mark.parametrize("stage", PROPOSAL_FAILURE_STAGES)
+def test_proposal_transition_rolls_back_every_failure_boundary(stage: str) -> None:
+    suffix = f"atomic-proposal-{stage.replace('_', '-')}"
+    orchestrator, _, _, coordinator = _setup(
+        suffix,
+        configuration=_fast_proposal_configuration(),
+        bars=_fast_bars(),
+    )
+    _advance_to_proposal_boundary(orchestrator)
+    published_before = len(orchestrator.scheduler.published_result_ids)
+    before = _atomic_state(orchestrator, coordinator)
+
+    def fail_at(observed: str) -> None:
+        if observed == stage:
+            raise RuntimeError(f"injected failure: {stage}")
+
+    orchestrator._failure_injector = fail_at
+    with pytest.raises(RuntimeError, match="injected failure"):
+        orchestrator.advance()
+    assert _atomic_state(orchestrator, coordinator) == before
+
+    orchestrator._failure_injector = None
+    result = orchestrator.advance()
+    assert result is not None
+    assert result.scheduler_event_position == 3
+    assert result.outcome is OrchestrationOutcome.CAPITAL_RESERVED
+    assert orchestrator.scheduler.position == 4
+    assert len(orchestrator.scheduler.published_result_ids) == published_before + 1
+    assert coordinator.allocation_snapshot(result.allocation_id).active_reservation_count == 1
+
+
+NO_TRADE_FAILURE_STAGES = (
+    "after_event_inspection",
+    "during_visibility_resolution",
+    "during_indicator_calculation",
+    "during_strategy_evaluation",
+    "during_result_construction",
+    "during_result_validation",
+    "immediately_before_commit",
+    "during_commit_after_result",
+    "during_commit_after_cursor",
+)
+
+
+@pytest.mark.parametrize("stage", NO_TRADE_FAILURE_STAGES)
+def test_no_trade_transition_rolls_back_every_reachable_failure_boundary(stage: str) -> None:
+    suffix = f"atomic-no-trade-{stage.replace('_', '-')}"
+    orchestrator, _, _, coordinator = _setup(suffix)
+    assert orchestrator.advance() is None
+    before = _atomic_state(orchestrator, coordinator)
+
+    def fail_at(observed: str) -> None:
+        if observed == stage:
+            raise RuntimeError(f"injected failure: {stage}")
+
+    orchestrator._failure_injector = fail_at
+    with pytest.raises(RuntimeError, match="injected failure"):
+        orchestrator.advance()
+    assert _atomic_state(orchestrator, coordinator) == before
+
+    orchestrator._failure_injector = None
+    result = orchestrator.advance()
+    assert result is not None
+    assert result.outcome is OrchestrationOutcome.NO_TRADE
+    assert orchestrator.scheduler.position == 2
+    assert len(orchestrator.scheduler.published_result_ids) == 1
+
+
+def _setup_with_retained_scheduler(
+    suffix: str,
+) -> tuple[DeterministicReplayScheduler, CausalOrchestrator]:
+    configuration = MultiFactorConfiguration()
+    dataset = _dataset(strategy_bars(("100", "101")))
+    risk = _risk()
+    manifest = _manifest(
+        dataset,
+        configuration,
+        risk,
+        suffix=suffix,
+        mandate_id=_multi_factor_mandate_id(),
+    )
+    artifact = _artifact(dataset, manifest)
+    coordinator = _coordinator(manifest)
+    retained = DeterministicReplayScheduler.from_artifact(artifact)
+    orchestrator = CausalOrchestrator(
+        artifact=artifact,
+        dataset=dataset,
+        strategy_configuration=configuration,
+        risk_configuration=risk,
+        cost_estimate=zeroish_costs(),
+        capital_coordinator=coordinator,
+    )
+    return retained, orchestrator
+
+
+def test_public_scheduler_view_cannot_advance_authoritative_cursor() -> None:
+    orchestrator, _, _, _ = _setup("public-view-attack")
+    before = orchestrator.scheduler.position
+    with pytest.raises(AttributeError):
+        orchestrator.scheduler.next_event()  # type: ignore[attr-defined]
+    assert orchestrator.scheduler.position == before
+
+
+def test_retained_and_second_scheduler_handles_fail_closed_after_lease() -> None:
+    retained, orchestrator = _setup_with_retained_scheduler("retained-handle-attack")
+    second = DeterministicReplayScheduler.from_artifact(orchestrator._artifact)
+    before = orchestrator.scheduler.position
+    for handle in (retained, second):
+        with pytest.raises(SchedulerLeaseError, match="exclusively leased"):
+            handle.next_event()
+        assert orchestrator.scheduler.position == before
+
+
+def test_external_handle_cannot_consume_first_market_event() -> None:
+    retained, orchestrator = _setup_with_retained_scheduler("first-market-attack")
+    assert orchestrator.advance() is None
+    before = orchestrator.scheduler.position
+    with pytest.raises(SchedulerLeaseError, match="exclusively leased"):
+        retained.next_event()
+    assert orchestrator.scheduler.position == before
+    result = orchestrator.advance()
+    assert result is not None
+    assert result.scheduler_event_position == before
+
+
+def test_concurrent_external_advance_fails_closed_without_skipping() -> None:
+    retained, orchestrator = _setup_with_retained_scheduler("concurrent-external-attack")
+    assert orchestrator.advance() is None
+    entered = Event()
+    release = Event()
+
+    def block_at_visibility(stage: str) -> None:
+        if stage == "during_visibility_resolution":
+            entered.set()
+            assert release.wait(timeout=10)
+
+    orchestrator._failure_injector = block_at_visibility
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        orchestration_future = pool.submit(orchestrator.advance)
+        assert entered.wait(timeout=10)
+        external_future = pool.submit(retained.next_event)
+        release.set()
+        result = orchestration_future.result(timeout=10)
+        with pytest.raises(SchedulerLeaseError, match="exclusively leased"):
+            external_future.result(timeout=10)
+    orchestrator._failure_injector = None
+    assert result is not None
+    assert result.scheduler_event_position == 1
+    assert orchestrator.scheduler.position == 2
+
+
+def test_concurrent_orchestrators_publish_distinct_events_once() -> None:
+    first, artifact, dataset, coordinator = _setup(
+        "concurrent-orchestrators", bars=strategy_bars(("100", "101"))
+    )
+    second = CausalOrchestrator(
+        artifact=artifact,
+        dataset=dataset,
+        strategy_configuration=MultiFactorConfiguration(),
+        risk_configuration=_risk(),
+        cost_estimate=zeroish_costs(),
+        capital_coordinator=coordinator,
+    )
+    assert first.advance() is None
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(
+            future.result(timeout=10)
+            for future in (pool.submit(first.advance), pool.submit(second.advance))
+        )
+    assert all(result is not None for result in results)
+    positions = {result.scheduler_event_position for result in results if result is not None}
+    assert positions == {1, 2}
+    assert first.scheduler.position == 3
+    assert len(set(first.scheduler.published_result_ids)) == 2
+
+
+def _reidentify_result(content: dict[str, object]) -> dict[str, object]:
+    content["causal_parent_ids"] = _causal_parent_ids(content)
+    content["orchestration_result_id"] = calculate_orchestration_result_id(content)
+    return content
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("artifact_id", "sha256:" + "a" * 64),
+        ("schedule_id", "sha256:" + "b" * 64),
+        ("scheduler_event_position", 2),
+        ("run_id", "sha256:" + "c" * 64),
+        ("orchestration_configuration_id", "sha256:" + "d" * 64),
+        ("strategy_configuration_id", "sha256:" + "e" * 64),
+        ("cost_methodology_version_id", "cost-methodology:foreign"),
+    ),
+)
+def test_context_bound_validation_rejects_rehashed_provenance_tampering(
+    field: str, replacement: object
+) -> None:
+    orchestrator, _, _, _ = _setup(
+        f"provenance-{field.replace('_', '-')}",
+        configuration=_fast_proposal_configuration(),
+        bars=_fast_bars(),
+    )
+    _advance_to_proposal_boundary(orchestrator)
+    result = orchestrator.advance()
+    assert result is not None
+    content = result.model_dump(mode="python")
+    content[field] = replacement
+    _reidentify_result(content)
+    with pytest.raises(ValidationError):
+        orchestrator.validate_result(content)
+
+
+def test_context_bound_validation_rejects_wrong_rehashed_event_and_prefix() -> None:
+    orchestrator, _, _, _ = _setup(
+        "provenance-event-prefix",
+        configuration=_fast_proposal_configuration(),
+        bars=_fast_bars(),
+    )
+    _advance_to_proposal_boundary(orchestrator)
+    result = orchestrator.advance()
+    assert result is not None
+
+    wrong_event = result.model_dump(mode="python")
+    wrong_event["triggering_event"] = orchestrator.scheduler.schedule.events[2]
+    _reidentify_result(wrong_event)
+    with pytest.raises(ValidationError, match="triggering scheduler"):
+        orchestrator.validate_result(wrong_event)
+
+    wrong_prefix = result.model_dump(mode="python")
+    wrong_prefix["released_market_events"] = result.released_market_events[1:]
+    _reidentify_result(wrong_prefix)
+    with pytest.raises(ValidationError, match="exact consumed schedule prefix"):
+        orchestrator.validate_result(wrong_prefix)
+
+
+def test_generic_result_reconstruction_without_authoritative_context_is_rejected() -> None:
+    orchestrator, _, _, _ = _setup("provenance-context-required")
+    assert orchestrator.advance() is None
+    result = orchestrator.advance()
+    assert result is not None
+    with pytest.raises(ValidationError, match="authoritative orchestration context"):
+        CausalOrchestrationResult.model_validate(result.model_dump(mode="python"))
+    with pytest.raises(ValidationError, match="authoritative orchestration context"):
+        CausalOrchestrationResult.model_validate(result)
+    assert orchestrator.validate_result(result) == result
+    assert orchestrator.validate_result_json(result.model_dump_json()) == result

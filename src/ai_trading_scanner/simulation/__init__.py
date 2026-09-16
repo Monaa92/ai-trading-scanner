@@ -52,6 +52,7 @@ from ai_trading_scanner.simulation.orchestration import (
     CausalOrchestrator,
     OrchestrationInvariantError,
     OrchestrationOutcome,
+    OrchestrationSchedulerView,
     calculate_orchestration_configuration_id,
     calculate_orchestration_result_id,
 )
@@ -74,6 +75,7 @@ from ai_trading_scanner.simulation.scheduler import (
     ReplaySchedulerCheckpoint,
     SchedulerCheckpointError,
     SchedulerExhaustedError,
+    SchedulerLeaseError,
     calculate_replay_schedule_id,
     calculate_replay_scheduler_checkpoint_id,
 )
@@ -100,6 +102,7 @@ __all__ = [
     "MissingExecutionDataPolicy",
     "OrchestrationInvariantError",
     "OrchestrationOutcome",
+    "OrchestrationSchedulerView",
     "PortfolioSnapshot",
     "PositionAccountingPolicy",
     "PositionChange",
@@ -117,6 +120,7 @@ __all__ = [
     "ResultFinalizationPayload",
     "SchedulerCheckpointError",
     "SchedulerExhaustedError",
+    "SchedulerLeaseError",
     "SessionControlPayload",
     "SimulatedFill",
     "SimulatedOrder",

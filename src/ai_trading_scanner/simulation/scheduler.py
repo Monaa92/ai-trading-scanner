@@ -133,6 +133,10 @@ class SchedulerExhaustedError(RuntimeError):
     """Raised when a caller attempts to consume beyond deterministic exhaustion."""
 
 
+class SchedulerLeaseError(RuntimeError):
+    """Raised when a leased orchestration cursor is advanced outside its owner."""
+
+
 @dataclass(slots=True)
 class _TrustedCursorState:
     """Process-local authority for one logical cursor over one exact schedule."""
@@ -142,6 +146,7 @@ class _TrustedCursorState:
     total_events: int
     next_position: int
     trusted_checkpoint_id: ReplaySchedulerCheckpointId | None
+    orchestration_lease_token: object | None
     lock: Lock
 
 
@@ -184,6 +189,7 @@ def _trusted_state_for(schedule: ReplaySchedule) -> _TrustedCursorState:
                 total_events=len(schedule.events),
                 next_position=0,
                 trusted_checkpoint_id=None,
+                orchestration_lease_token=None,
                 lock=Lock(),
             )
             _PROCESS_CURSOR_STATES[schedule.schedule_id] = state
@@ -191,6 +197,137 @@ def _trusted_state_for(schedule: ReplaySchedule) -> _TrustedCursorState:
         if state.run_id != schedule.run_id or state.total_events != len(schedule.events):
             raise SchedulerCheckpointError("scheduler authority conflicts with schedule identity")
         return state
+
+
+class _LeasedSchedulerTransition:
+    """Hold the cursor lock and roll back its commit if the outer transition fails."""
+
+    __slots__ = (
+        "_committed",
+        "_entered",
+        "_event",
+        "_lease_token",
+        "_position_before",
+        "_schedule",
+        "_state",
+        "_trusted_checkpoint_before",
+    )
+
+    def __init__(
+        self,
+        schedule: ReplaySchedule,
+        state: _TrustedCursorState,
+        lease_token: object,
+    ) -> None:
+        self._schedule = schedule
+        self._state = state
+        self._lease_token = lease_token
+        self._entered = False
+        self._committed = False
+        self._position_before = -1
+        self._trusted_checkpoint_before: ReplaySchedulerCheckpointId | None = None
+        self._event: ReplayEvent | None = None
+
+    def __enter__(self) -> _LeasedSchedulerTransition:
+        self._state.lock.acquire()
+        self._entered = True
+        try:
+            if self._state.orchestration_lease_token is not self._lease_token:
+                raise SchedulerLeaseError(
+                    "orchestration scheduler lease is no longer authoritative"
+                )
+            if self._state.next_position >= len(self._schedule.events):
+                raise SchedulerExhaustedError("replay schedule is exhausted")
+            self._position_before = self._state.next_position
+            self._trusted_checkpoint_before = self._state.trusted_checkpoint_id
+            self._event = self._schedule.events[self._position_before]
+            return self
+        except BaseException:
+            self._state.lock.release()
+            self._entered = False
+            raise
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> Literal[False]:
+        try:
+            if exc_type is not None or not self._committed:
+                self._state.next_position = self._position_before
+                self._state.trusted_checkpoint_id = self._trusted_checkpoint_before
+            if exc_type is None and not self._committed:
+                raise SchedulerLeaseError("orchestration transition exited without commit")
+            return False
+        finally:
+            if self._entered:
+                self._state.lock.release()
+                self._entered = False
+
+    @property
+    def event(self) -> ReplayEvent:
+        if not self._entered or self._event is None:
+            raise SchedulerLeaseError("orchestration transition is not active")
+        return self._event
+
+    @property
+    def position_before(self) -> int:
+        if not self._entered:
+            raise SchedulerLeaseError("orchestration transition is not active")
+        return self._position_before
+
+    @property
+    def position_after(self) -> int:
+        return self.position_before + 1
+
+    def commit(self) -> None:
+        if not self._entered or self._event is None:
+            raise SchedulerLeaseError("orchestration transition is not active")
+        if self._committed:
+            raise SchedulerLeaseError("orchestration transition is already committed")
+        if self._state.next_position != self._position_before:
+            raise SchedulerLeaseError("orchestration cursor changed during its transition")
+        try:
+            self._state.next_position = self._position_before + 1
+            self._state.trusted_checkpoint_id = None
+            self._committed = True
+        except BaseException:
+            self._state.next_position = self._position_before
+            self._state.trusted_checkpoint_id = self._trusted_checkpoint_before
+            raise
+
+
+class _OrchestrationSchedulerLease:
+    """Private capability that is the sole writer of a bound scheduler cursor."""
+
+    __slots__ = ("_lease_token", "_schedule", "_state")
+
+    def __init__(
+        self,
+        schedule: ReplaySchedule,
+        state: _TrustedCursorState,
+        lease_token: object,
+    ) -> None:
+        self._schedule = schedule
+        self._state = state
+        self._lease_token = lease_token
+
+    @property
+    def schedule(self) -> ReplaySchedule:
+        return self._schedule
+
+    def inspect(self) -> tuple[int, ReplaySchedulerCheckpoint]:
+        with self._state.lock:
+            if self._state.orchestration_lease_token is not self._lease_token:
+                raise SchedulerLeaseError(
+                    "orchestration scheduler lease is no longer authoritative"
+                )
+            position = self._state.next_position
+            return position, _checkpoint_at(self._schedule, position)
+
+    def transition(self) -> _LeasedSchedulerTransition:
+        return _LeasedSchedulerTransition(self._schedule, self._state, self._lease_token)
 
 
 class DeterministicReplayScheduler:
@@ -281,9 +418,22 @@ class DeterministicReplayScheduler:
 
     def next_event(self) -> ReplayEvent:
         with self._state.lock:
+            if self._state.orchestration_lease_token is not None:
+                raise SchedulerLeaseError(
+                    "scheduler cursor is exclusively leased to causal orchestration"
+                )
             if self._state.next_position >= len(self._schedule.events):
                 raise SchedulerExhaustedError("replay schedule is exhausted")
             event = self._schedule.events[self._state.next_position]
             self._state.next_position += 1
             self._state.trusted_checkpoint_id = None
             return event
+
+    def _lease_for_orchestration(self) -> _OrchestrationSchedulerLease:
+        """Bind the shared cursor to one private orchestration capability."""
+        with self._state.lock:
+            if self._state.orchestration_lease_token is not None:
+                raise SchedulerLeaseError("scheduler cursor already has an orchestration owner")
+            lease_token = object()
+            self._state.orchestration_lease_token = lease_token
+            return _OrchestrationSchedulerLease(self._schedule, self._state, lease_token)
