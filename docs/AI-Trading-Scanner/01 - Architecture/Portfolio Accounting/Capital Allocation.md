@@ -34,6 +34,8 @@ Allocation/transfer and order reservation use one account coordinator transactio
 
 Four independent simulated EUR50 accounts have four separate funding namespaces. They are legitimate replicated experimental starting conditions, not permission to assign the same real EUR50 four times. Shared broker-paper funding uses a real internal allocation partition of that paper balance; account contention is disclosed. Independent experiments should avoid that coupling. See [[01 - Architecture/Agent Architecture]].
 
+The future Agent 5 architecture adds one internal allocation tree beneath one top-level economic entity. Descendant budgets debit the entity's unallocated capacity and remain encumbrances/claims inside its existing capital. Their available, reserved and committed amounts plus the entity remainder must reconcile at every checkpoint. Creating or nesting descendants never adds top-level equity, broker buying power or risk headroom. See [[02 - Agents & Strategies/Autonomous Survival Agent]].
+
 ## Deposits, withdrawals and normal changes
 
 Frozen experiments prohibit top-ups, withdrawals and allocation edits. Unexpected external changes lock/reconcile; retain original run, mark protocol deviation/termination under the registered rule, never erase losses or restart the survival clock silently.

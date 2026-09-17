@@ -6,7 +6,7 @@ Status: **PARTIAL**. The architecture, governance and human-readable vault are p
 
 | State | Current classification | Recovery treatment |
 | --- | --- | --- |
-| Source/governance, Phase 1–2 package/tests/lockfile, `AGENTS.md`, `README.md`, `docs/PROJECT_RULES.md` and vault Markdown | Protected on `origin/main` after the approved Phase 2 merge | Clone from GitHub and run the locked setup below. |
+| Source/governance, Phase 1–5 package/tests/lockfile, `AGENTS.md`, `README.md`, `docs/PROJECT_RULES.md` and vault Markdown | Protected on `origin/main`; accepted Phase 6 candidate history and current architecture are protected on the pushed feature branch until later reviewed/merged | Clone from GitHub, select the required branch/commit and run the locked setup below. |
 | Stable vault settings: `.obsidian/app.json`, `appearance.json`, `core-plugins.json`, `graph.json` | Protected with the vault | Restore with the clone; these contain no credentials. |
 | `.obsidian/workspace.json` and local UI/session state | Intentionally ignored; safe to lose/regenerable | Obsidian recreates it; project knowledge does not depend on it. |
 | Generated performance notes/charts | Regenerable by design; none exist | Rebuild from authoritative experiment data, never treat charts as the only evidence. |
@@ -29,4 +29,4 @@ Pre-commit classification covered every untracked file: 101 vault Markdown notes
 8. Verify all internal links, dataset identities, ledger/run manifests, Graphify integration and dashboard regeneration.
 9. Keep PAPER/LIVE disabled until their independent readiness gates and owner decisions.
 
-A fresh clone reconstructs the non-secret architecture, governance, Phase 1–3 executable foundations, synthetic fixtures and important Obsidian knowledge. Full disaster-recovery readiness still cannot be claimed: the phase that first creates authoritative external market or experiment data must choose a durable backup target and tested restore procedure without introducing a paid service by default.
+A fresh clone of the relevant pushed branch reconstructs the non-secret architecture, governance, implemented Phase 1–6 candidate source/tests, synthetic fixtures and important Obsidian knowledge. The accepted current scheduler/orchestrator remains process-local and is not durable experiment recovery. Full disaster-recovery readiness still cannot be claimed: the phase that first creates authoritative market, economic journal or experiment data must deploy an integrity-checked durable store, backup target and tested restore procedure without introducing a paid service by default. The target journal/checkpoint recovery contract is specified in [[01 - Architecture/Execution/Replay and Simulation Architecture]].

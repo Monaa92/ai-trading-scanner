@@ -8,12 +8,13 @@ run/events, next-eligible-bar-open order/fill contracts, versioned costs, conser
 records, deterministic trace serialization and an in-memory deterministic event scheduler. Only a
 fully validated typed replay artifact can create an executable scheduler. Process-local cursor
 authority issues current-state checkpoints and prevents in-process skip/rewind; content identity is
-not authentication and durable cross-process anti-rollback remains unimplemented. A bounded
-one-event causal orchestrator evaluates the accepted Phase 3/4 contracts and Phase 5 reservation
-boundary with authoritative reconstruction checks. The fill/accounting transition engine, complete
-replay/execution loop, durable artifact writer and end-to-end simulation remain unimplemented. Research baselines remain
-unvalidated. No scanner, broker/provider/AI integration, PAPER/LIVE execution or external order
-authority exists.
+not authentication and durable cross-process anti-rollback remains unimplemented. The bounded
+one-event causal orchestrator through `b76891f7a1d787c2c07d26c0f4dd6a42df55aada` is accepted. It
+evaluates the accepted Phase 3/4 contracts and Phase 5 reservation boundary with authoritative
+reconstruction checks. Atomic replay/execution, causal cost/FX, durable recovery and future
+4+1/Autonomous Survival Agent architecture are documented but unimplemented. Research baselines
+remain unvalidated. No complete execution loop, Agent 5, scanner, broker/provider/AI integration,
+PAPER/LIVE execution or external order authority exists.
 
 - [Project rules](docs/PROJECT_RULES.md) — authoritative governance.
 - [Agent instructions](AGENTS.md) — required entry point for future agents.

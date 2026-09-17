@@ -52,3 +52,10 @@ ADRs 025–032 are design decisions only. ADR-026 supersedes only ADR-006's futu
 - [[00 - Project/Decisions/ADR-033 - Deterministic Phase 6 replay foundation]]
 
 ADR-033 specifies the content-identified discrete-event ordering, next-eligible-bar-open fill boundary, explicit no-double-count cost treatment and canonical local event serialization for the Phase 6 foundation. It does not mark Phase 6 complete or authorize broker, PAPER or LIVE execution.
+
+## Phase 6 replay/execution and 4+1 architecture — 2026-09-17
+
+- [[00 - Project/Decisions/ADR-034 - Atomic deterministic simulation execution]]
+- [[00 - Project/Decisions/ADR-035 - Autonomous survival economic entity]]
+
+ADR-034 defines the target atomic order/fill/accounting, causal cost/FX and durable recovery architecture. ADR-035 defines Agent 5 as one conserved economic entity with a frozen adaptation envelope, opportunity-aware active-survival objective and irreversible economic death. Both are design decisions only. They do not implement replay/execution, Agent 5, AI, broker connectivity, PAPER or LIVE authority and do not add Agent 5 to Experiment 1.

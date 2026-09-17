@@ -111,3 +111,23 @@ These are behavioral tests required in future implementation. Interface/import e
 | Profit management | No universal profit-cap invariant exists; registered strategy exits obey central hard downside limits, causal inputs and immutable re-approval |
 
 The Phase 3 fixture must execute one deterministic end-to-end run and assert trace contents, balances, attribution and metrics. Until that exists, [[06 - Testing/Phase 3 Completion Criteria]] remains NOT READY FOR TESTING.
+
+## Phase 6 replay/execution and Agent 5 acceptance design
+
+The target test architecture is defined before implementation in [[01 - Architecture/Execution/Replay and Simulation Architecture]] and [[02 - Agents & Strategies/Autonomous Survival Agent]]. Passing contract-existence tests is insufficient.
+
+| Test layer | Required evidence |
+| --- | --- |
+| Pure resolver units | Every order eligibility, gap, missing-bar, expiry, cancellation, liquidity, cost, FX, stop/target and terminal branch has exact Decimal/time/identity assertions and negative malformed cases. |
+| Causal/property invariants | Extending future data cannot change an earlier prefix; equivalent input order/Decimal forms are identical; no execution source precedes eligibility; FX cannot be used before availability. |
+| Accounting properties | Random valid event sequences conserve cash/equity/currency legs and parent/entity allocations; every reservation/fill/cost posts once; invalid/foreign/duplicate sequences fail closed. |
+| Atomicity/failure injection | Fail before and after every cursor, order, reservation, fill, cash, cost, FX, position, trade, checkpoint, policy, child lifecycle and death publication boundary; state is exactly prior or exactly committed. |
+| Concurrency | Race identical/different orders, reservations, child allocations, policy revisions, retirements and death against one fenced owner; prove no intermediate reads, deadlocks, duplicate effects or capital creation. |
+| Restart/recovery | Crash at each durable boundary, restart in a fresh process, reject stale/forged checkpoints and broken hash chains, and reproduce one monotonic byte-identical result. |
+| Cross-agent isolation | Five top-level accounts share immutable evidence while all cash, positions, reservations, orders, results and private decisions remain disjoint; descendants remain inside Agent 5. |
+| Agent 5 adversarial | Create nested/concurrent descendants, forge allocations/roles/evidence, attempt cycles/source/world mutation/policy rollback/death reset, and prove entity conservation and capability denial. |
+| Active-survival gaming | Permanent cash during qualified opportunity epochs, split/tiny/unfillable/churn actions and false activity cannot qualify; no-opportunity epochs and legitimate NO_TRADE remain valid. |
+| Model trust boundary | Malformed, stale, foreign, over-capability and nondeterministic model envelopes produce retained rejection/NO_ACTION and no economic mutation; captured valid output replays without a provider call. |
+| 4+1 integration | Same evidence fan-out, deterministic worker ordering, independent failure scope, complete terminal reconciliation and immutable metrics satisfy [[03 - Experiments/4+1 Historical Experiment]]. |
+
+Independent competent review is required at each risk-critical milestone, not only after the final harness. The first next milestone tests pure simulated-order and terminal resolution without claiming that accounting or Agent 5 exists.

@@ -24,3 +24,5 @@ Each immutable profile records version/effective date, source and validation sta
 | `SIMULATED_KRAKEN_SPOT` | Future crypto simulation only | DEFERRED, numeric values unselected; unavailable to Experiment 1 |
 
 Track commission, spread, slippage, exchange/regulatory and FX separately. Fill prices may already include spread/slippage; attribution must not debit them twice. Report total execution costs, average round-trip cost, costs/capital, costs/gross profit and cost-driven rejection rate.
+
+The target Phase 6 execution architecture also requires causal FX observations and balanced currency-conversion postings. Cost and FX methodologies are separate immutable identities: a fee profile cannot smuggle an unproven exchange rate into configuration. Expected Phase 4 round-trip costs and realized Phase 6 components must declare compatible methodology versions, and estimation error remains reportable evidence. See [[01 - Architecture/Execution/Replay and Simulation Architecture]].

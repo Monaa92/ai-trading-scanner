@@ -1,6 +1,6 @@
 # Experiment design and promotion
 
-Status: required future process, no experiments run. Phase 5 supplies deterministic risk/allocation contracts. Phase 6 now has simulation/accounting/result contracts, an accepted in-memory scheduler and a bounded one-event causal-orchestration candidate; the complete runner, durable ledger and simulation broker remain absent. Start future work with a deterministic baseline, no AI, fixed capital/risk model, and cash/no-trade control. Treat EUR 50 execution infeasibility as a research outcome.
+Status: required future process, no experiments run. Phase 5 supplies deterministic risk/allocation contracts. Phase 6 now has simulation/accounting/result contracts, an accepted in-memory scheduler and accepted bounded one-event causal orchestration; the complete runner, durable ledger, Agent 5 and simulation broker remain absent. Start future work with a deterministic baseline, no AI, fixed capital/risk model, and cash/no-trade control. Treat EUR 50 execution infeasibility as a research outcome.
 
 ## Registration and splits
 
@@ -35,3 +35,7 @@ Record all artifacts in [[01 - Architecture/Data Model]], every decision in [[00
 [[03 - Experiments/Autonomous Experiments]] registers four independent EUR50 participant ledgers. [[02 - Agents & Strategies/Experiment 1 Strategy Profiles]] names the four unvalidated hypotheses; exact parameters and model assignments still require preregistration. Freeze all strategy/risk/AI/management/execution-dimension/funding artifacts and adaptive algorithms. Equivalent data access and independent reservations are required; common-market participants are correlated, not independent statistical replications. Predefine comparison families, survival endpoints and administrative intervention treatment. Preserve failed/inactive participants and original outcomes.
 
 NORMAL changes are attributed/versioned configuration segments and capital flows, not the same frozen experiment. Compare like-for-like segments using [[09 - Performance/Agent Statistics]]. [[03 - Experiments/Counterfactual Analysis]] is diagnostic and separately named; hypothetical wins never add to participant equity. Dynamic exits need their own comparison/ablation rather than attributing a multi-factor change entirely to AI.
+
+## Future 4+1 architecture experiment
+
+[[03 - Experiments/4+1 Historical Experiment]] is a separate registered system-level comparison. It preserves the four fixed strategy participants and adds one adaptive survival entity under [[02 - Agents & Strategies/Autonomous Survival Agent]]. Because Agent 5 differs in architecture, the comparison cannot isolate strategy or model effects. Equivalent causal evidence, equal top-level starting capital and hard constraints remain mandatory; policy flexibility is the treatment difference. The protocol is unimplemented and does not alter Experiment 1.

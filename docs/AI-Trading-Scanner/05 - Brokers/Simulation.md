@@ -1,6 +1,6 @@
 # Simulation broker
 
-Status: **PARTIAL — PHASE 6 CONTRACT FOUNDATION ONLY**. Immutable offline execution-model, order, fill, terminal-resolution and market-event contracts are implemented in `ai_trading_scanner.simulation`; no adapter, scheduler or order-processing service exists.
+Status: **PARTIAL — PHASE 6 FOUNDATION, SCHEDULER AND CAUSAL ORCHESTRATION ONLY**. Immutable offline execution-model, order, fill, terminal-resolution and market-event contracts plus the accepted in-memory scheduler/orchestrator are implemented in `ai_trading_scanner.simulation`; no `SimulationBrokerAdapter`, order-processing service, fill/accounting poster or complete replay loop exists.
 
 `SimulationBrokerAdapter` will implement every method in [[01 - Architecture/Broker Architecture]] without network access or credentials. It will consume immutable order intents and causal market events, enforce an explicit capability snapshot, model cancellations/rejections/ambiguity, apply the frozen transaction-cost/execution profile and emit deterministic events under a fixed run manifest. The foundation exposes no broker-shaped authority or network port.
 
@@ -10,4 +10,4 @@ The current artifact contract requires one unique execution resolution per compl
 
 Each `(run_id, agent_id, allocation_id)` owns independent cash, reservations, positions, realized/unrealized P&L, costs, risk state and order attribution. Equivalent shared market snapshots are read-only inputs. Simulation must reject unsupported order features, stale required data and cross-agent access. NO_TRADE produces a decision event only.
 
-Phase 6 completion requires executable lifecycle behavior, causal strategy/risk orchestration, reservation consumption/release, stop/target handling, restart/idempotency tests and reconciliation with the authoritative ledger. Contract existence alone is insufficient. PAPER, LIVE, IBKR and Kraken remain unavailable.
+Phase 6 completion requires executable lifecycle behavior, reservation consumption/release, stop/target handling, causal costs/FX, restart/idempotency tests and reconciliation with the authoritative ledger. Causal strategy/risk orchestration is accepted, but contract existence and reservations alone are insufficient. The complete target is [[01 - Architecture/Execution/Replay and Simulation Architecture]]. PAPER, LIVE, IBKR and Kraken remain unavailable.
