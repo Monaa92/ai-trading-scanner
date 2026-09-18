@@ -64,12 +64,15 @@ class ExecutionResolutionOutcome(StrEnum):
     FILL_READY = "FILL_READY"
     EXPIRED_UNFILLED = "EXPIRED_UNFILLED"
     NO_ELIGIBLE_DATA = "NO_ELIGIBLE_DATA"
+    CANCELLED = "CANCELLED"
     REJECTED = "REJECTED"
 
 
 class ExecutionResolutionReason(StrEnum):
     ORDER_VALIDITY_EXPIRED = "ORDER_VALIDITY_EXPIRED"
     NO_ELIGIBLE_SAME_SESSION_BAR = "NO_ELIGIBLE_SAME_SESSION_BAR"
+    CANCELLATION_EFFECTIVE = "CANCELLATION_EFFECTIVE"
+    INSUFFICIENT_LIQUIDITY = "INSUFFICIENT_LIQUIDITY"
     EXECUTION_POLICY_REJECTED = "EXECUTION_POLICY_REJECTED"
 
 
@@ -77,7 +80,9 @@ class ExecutionResolutionPayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     payload_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    schema_version: Literal["execution-resolution-payload-v2"] = "execution-resolution-payload-v2"
+    schema_version: Literal[
+        "execution-resolution-payload-v2", "execution-resolution-payload-v3"
+    ] = "execution-resolution-payload-v2"
     run_id: SimulationRunId
     order_id: SimulatedOrderId
     resolved_at: datetime
@@ -92,7 +97,16 @@ class ExecutionResolutionPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self) -> Self:
-        expected_reason = {
+        extended_v3 = self.outcome is ExecutionResolutionOutcome.CANCELLED or (
+            self.outcome is ExecutionResolutionOutcome.REJECTED
+            and self.reason is ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY
+        )
+        required_schema = (
+            "execution-resolution-payload-v3" if extended_v3 else "execution-resolution-payload-v2"
+        )
+        if self.schema_version != required_schema:
+            raise ValueError("execution resolution behavior requires its schema version")
+        expected_reasons = {
             ExecutionResolutionOutcome.FILL_READY: None,
             ExecutionResolutionOutcome.EXPIRED_UNFILLED: (
                 ExecutionResolutionReason.ORDER_VALIDITY_EXPIRED
@@ -100,16 +114,26 @@ class ExecutionResolutionPayload(BaseModel):
             ExecutionResolutionOutcome.NO_ELIGIBLE_DATA: (
                 ExecutionResolutionReason.NO_ELIGIBLE_SAME_SESSION_BAR
             ),
+            ExecutionResolutionOutcome.CANCELLED: (
+                ExecutionResolutionReason.CANCELLATION_EFFECTIVE
+            ),
             ExecutionResolutionOutcome.REJECTED: (
-                ExecutionResolutionReason.EXECUTION_POLICY_REJECTED
+                ExecutionResolutionReason.EXECUTION_POLICY_REJECTED,
+                ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY,
             ),
         }[self.outcome]
-        if self.reason is not expected_reason:
+        if isinstance(expected_reasons, tuple):
+            reason_matches = self.reason in expected_reasons
+        else:
+            reason_matches = self.reason is expected_reasons
+        if not reason_matches:
             raise ValueError("execution resolution outcome and reason are inconsistent")
-        if (self.outcome is ExecutionResolutionOutcome.FILL_READY) != (
-            self.source_market_event_id is not None
-        ):
-            raise ValueError("fill-ready resolution requires exactly one market source")
+        source_required = self.outcome is ExecutionResolutionOutcome.FILL_READY or (
+            self.outcome is ExecutionResolutionOutcome.REJECTED
+            and self.reason is ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY
+        )
+        if source_required != (self.source_market_event_id is not None):
+            raise ValueError("execution resolution market-source evidence is inconsistent")
         if self.payload_id != calculate_marker_payload_id(self):
             raise ValueError("execution resolution payload identity does not match content")
         return self
@@ -430,14 +454,25 @@ class ReplayArtifactBundle(BaseModel):
             order_fills = fills_by_order.get(resolution.order_id, [])
             if resolution.resolved_at < resolved_order.submitted_at:
                 raise ValueError("execution resolution predates order submission")
+            if resolution.source_market_event_id is not None:
+                source = market_by_id.get(resolution.source_market_event_id)
+                if source is None:
+                    raise ValueError("execution resolution references a missing market event")
+                if source.instrument_id != resolved_order.instrument_id:
+                    raise ValueError("execution resolution market instrument differs from order")
+                if (
+                    resolution.outcome is ExecutionResolutionOutcome.REJECTED
+                    and resolution.reason is ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY
+                    and resolution.resolved_at != source.available_at
+                ):
+                    raise ValueError(
+                        "liquidity rejection must resolve when its source is available"
+                    )
             if resolution.outcome is ExecutionResolutionOutcome.FILL_READY:
                 source_market_event_id = resolution.source_market_event_id
                 assert source_market_event_id is not None
                 source = market_by_id.get(source_market_event_id)
-                if source is None:
-                    raise ValueError("fill-ready resolution references a missing market event")
-                if source.instrument_id != resolved_order.instrument_id:
-                    raise ValueError("execution resolution market instrument differs from order")
+                assert source is not None
                 if len(order_fills) != 1:
                     raise ValueError("fill-ready resolution requires exactly one matching fill")
                 fill = order_fills[0]

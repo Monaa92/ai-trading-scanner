@@ -1,6 +1,6 @@
 # Replay and simulation architecture
 
-Status: **DESIGNED — NOT IMPLEMENTED BEYOND THE ACCEPTED PHASE 6 FOUNDATION, SCHEDULER AND CAUSAL ORCHESTRATION.** This note defines the target deterministic SIMULATION architecture. It grants no broker, network, PAPER or LIVE authority.
+Status: **PARTIAL — MILESTONE 6.1 CANDIDATE IMPLEMENTED, NOT INDEPENDENTLY ACCEPTED.** The foundation, scheduler and causal orchestration remain accepted. The 6.1 candidate implements only idempotent order creation, an in-memory order projection and pure terminal resolution. It grants no fill, accounting, broker, network, PAPER or LIVE authority.
 
 The accepted contracts in `ai_trading_scanner.simulation`, the Phase 2 causal data model, Phase 3 indicator semantics, Phase 4 decisions and proposals, and Phase 5 risk/reservation coordinator remain authoritative. [[00 - Project/Decisions/ADR-033 - Deterministic Phase 6 replay foundation]] defines event ordering, next-eligible-bar execution and V1 accounting assumptions. [[00 - Project/Decisions/ADR-034 - Atomic deterministic simulation execution]] records the extension designed here.
 
@@ -52,6 +52,8 @@ An absent, unknown, stale or incompatible required input blocks the run. Current
 
 `SimulatedOrder` is extended through versioned contracts rather than replaced. Every order binds the exact proposal, approval or automatic mandate, final risk decision, reservation, agent/account/allocation/economic entity, instrument, side, quantity, order type, creation event, eligibility time, expiry, execution profile and idempotency key. Recomputed identities cannot replace authoritative proposal, risk or reservation evidence.
 
+The milestone 6.1 candidate implements this boundary with a content-identified `OrderCreationCommand` and `OrderCreationReceipt`. The projection owner revalidates the source result through the process-local authoritative `CausalOrchestrator`; only `CAPITAL_RESERVED` with its exact proposal, sizing, risk decision, reservation and ownership can create an order. Repeating or racing the same command returns one receipt and order identity. A rejection before creation records a typed receipt and creates no order projection. The projection is versioned and immutable; the process-local owner replaces it atomically and performs no capital mutation.
+
 The initial executable lifecycle is:
 
 ```text
@@ -78,6 +80,14 @@ The accepted XNYS and next-eligible-bar rules remain unchanged:
 6. A same-session gap uses the next eligible open. An intraday order never carries silently to another session.
 
 The resolver records candidate records considered, the selected record, eligibility/expiry/session boundaries, price policy, liquidity decision, ambiguity policy and reason for every terminal outcome. A profile with a volume participation ceiling must specify whether missing volume blocks execution. V1 full-fill behavior requires the whole approved quantity to pass that deterministic gate; otherwise it records no fill. Future partial-fill behavior needs a new execution-profile version.
+
+For the 6.1 candidate, `SimulationLiquidityConfiguration` is mandatory and versioned. It declares a maximum reported-bar-volume participation in `(0, 1]`, rejects zero or insufficient volume for the whole approved quantity, and never creates a partial fill. The configuration is bound into the creation command and terminal evidence. It is not yet part of `SimulationRunManifest`; a later manifest schema must freeze it before any serious run. No default participation percentage is supplied by the engine.
+
+Resolution reads an atomic orchestration market view and only dereferences market events in its released prefix. A released candidate must have the order instrument and originating XNYS session, `start_at > eligible_at`, and `start_at < min(valid_until, session close)`. The first candidate in canonical time/identity order wins. Price gaps therefore select the next actual eligible open; missing bars are never synthesized; a next-session bar is never a candidate. The resolver emits an extended `execution-resolution-payload-v3` only for cancellation or liquidity rejection while preserving V2 identities and semantics for the accepted fill-ready, expired and no-data outcomes.
+
+Cancellation is an engine-stamped command bound to the current schedule identity, cursor position and causal time. Cancellation before an execution interval open wins. If the candidate interval opens at the same timestamp, canonical execution-resolution precedence wins; cancellation cannot retroactively erase it. Cancellation after the interval open also cannot erase it even when the bar becomes observable later. Expiry is exclusive: a bar opening exactly at `valid_until` cannot fill. When an earlier interval could still become observable, the projection remains pending; absence becomes terminal only at authoritative schedule exhaustion.
+
+`FILL_READY` identifies the exact released market source and liquidity capacity but is not a `SimulatedFill`. Milestone 6.1 never calculates price/cost/FX, consumes or releases a reservation, posts cash/positions, or changes Phase 5 state. Those effects belong to milestones 6.2–6.3.
 
 ## Fixed stop and target lifecycle
 

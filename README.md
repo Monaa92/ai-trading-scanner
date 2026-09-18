@@ -11,10 +11,12 @@ authority issues current-state checkpoints and prevents in-process skip/rewind; 
 not authentication and durable cross-process anti-rollback remains unimplemented. The bounded
 one-event causal orchestrator through `b76891f7a1d787c2c07d26c0f4dd6a42df55aada` is accepted. It
 evaluates the accepted Phase 3/4 contracts and Phase 5 reservation boundary with authoritative
-reconstruction checks. Atomic replay/execution, causal cost/FX, durable recovery and future
-4+1/Autonomous Survival Agent architecture are documented but unimplemented. Research baselines
-remain unvalidated. No complete execution loop, Agent 5, scanner, broker/provider/AI integration,
-PAPER/LIVE execution or external order authority exists.
+reconstruction checks. Milestone 6.1 has an unreviewed candidate for authoritative idempotent order
+creation and pure causal terminal resolution with explicit liquidity configuration; it creates no
+fill and performs no accounting or reservation transition. Atomic economic posting, causal cost/FX,
+durable recovery and future 4+1/Autonomous Survival Agent architecture remain unimplemented.
+Research baselines remain unvalidated. No complete execution loop, Agent 5, scanner,
+broker/provider/AI integration, PAPER/LIVE execution or external order authority exists.
 
 - [Project rules](docs/PROJECT_RULES.md) — authoritative governance.
 - [Agent instructions](AGENTS.md) — required entry point for future agents.

@@ -171,6 +171,30 @@ class SimulatedOrderId(Identifier):
     """Content-derived identity of an immutable simulated order intent."""
 
 
+class OrderCreationCommandId(Identifier):
+    """Content-derived identity of one idempotent simulated-order command."""
+
+
+class OrderCreationReceiptId(Identifier):
+    """Content-derived identity of one simulated-order creation outcome."""
+
+
+class OrderProjectionId(Identifier):
+    """Content-derived identity of one immutable simulated-order projection."""
+
+
+class OrderCancellationCommandId(Identifier):
+    """Content-derived identity of one causally stamped cancellation command."""
+
+
+class OrderTerminalResolutionId(Identifier):
+    """Content-derived identity of one terminal simulated-order resolution."""
+
+
+class SimulationLiquidityModelId(Identifier):
+    """Content-derived identity of a deterministic simulation-liquidity profile."""
+
+
 class SimulatedFillId(Identifier):
     """Content-derived identity of an immutable simulated fill."""
 

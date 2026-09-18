@@ -126,6 +126,17 @@ class OrchestrationSchedulerView(BaseModel):
         return self
 
 
+@dataclass(frozen=True, slots=True)
+class OrchestrationMarketView:
+    """Atomic read-only cursor and released-market view for pure downstream resolvers."""
+
+    schedule: ReplaySchedule
+    scheduler_position: int
+    causal_at: datetime | None
+    released_market_events: tuple[MarketEventReference, ...]
+    exhausted: bool
+
+
 def _without_id(value: BaseModel | dict[str, object], field: str) -> dict[str, object]:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="python", exclude={field})
@@ -971,6 +982,20 @@ class CausalOrchestrator:
         with self._state.lock:
             position, _ = self._state.scheduler_lease.inspect()
             return self._released_prefix(position)
+
+    def market_view(self) -> OrchestrationMarketView:
+        """Snapshot cursor time and released evidence under the orchestration lock."""
+        with self._state.lock:
+            position, _ = self._state.scheduler_lease.inspect()
+            schedule = self._state.scheduler_lease.schedule
+            causal_at = schedule.events[position - 1].scheduled_at if position else None
+            return OrchestrationMarketView(
+                schedule=schedule,
+                scheduler_position=position,
+                causal_at=causal_at,
+                released_market_events=self._released_prefix(position),
+                exhausted=position == len(schedule.events),
+            )
 
     def validate_result(self, value: object) -> CausalOrchestrationResult:
         """Validate reconstructed evidence against this orchestrator's frozen inputs."""
