@@ -1,6 +1,6 @@
 # Conceptual data model
 
-The persistence schema remains a specification: no DDL, database or migrations exist. Phase 2 implements in-memory market records and causal slices; Phase 3 adds immutable indicator configurations/series; Phase 4 adds strategy decisions/proposals. The Phase 5 candidate adds immutable risk policies/decisions, sizing results, capital snapshots, safety locks, approval bindings and reservations plus an in-memory coordinator. None is durable. PostgreSQL is intended for later transactional records and metadata; large immutable artifacts may later live in private object/file storage referenced by checksum. See [[01 - Architecture/Market Data]], [[02 - Agents & Strategies/Shared Agent Rules/Indicators]], [[02 - Agents & Strategies/Shared Agent Rules/Signal Lifecycle]], [[07 - Operations/Configuration]] and [[07 - Operations/Logging & Observability]].
+The persistence schema remains a specification: no DDL, database or migrations exist. Phase 2 implements in-memory market records and causal slices; Phase 3 adds immutable indicator configurations/series; Phase 4 adds strategy decisions/proposals; Phase 5 adds immutable risk/sizing/capital/safety/reservation contracts and an in-memory coordinator. The Phase 6 foundation adds immutable run, market-event, replay, execution/cost, simulated order/fill, portfolio/position/trade and result contracts plus deterministic NDJSON serialization. None is durable. PostgreSQL is intended for later transactional records and metadata; immutable artifacts may later live in private object/file storage referenced by checksum. See [[01 - Architecture/Market Data]], [[01 - Architecture/Portfolio Accounting/Portfolio Accounting]], [[06 - Testing/Backtesting]], [[07 - Operations/Configuration]] and [[07 - Operations/Logging & Observability]].
 
 ## Common conventions
 
@@ -99,3 +99,22 @@ Composite ownership checks ensure proposal→approval→risk/safety→intent→f
 Market-data provenance includes provider/source, dataset ID, universe/instruments, granularity, timezone, start/end, adjustment method, ingestion time, schema/dataset version, quality warnings, missing intervals and deterministic hashes when available. Absence stays UNKNOWN. Comparative summaries carry dataset-equivalence status and cannot label unmatched data equivalent.
 
 Read models may compare agents for authorized owners, while participant repositories expose only own state and aggregate pass/headroom from parent constraints. Scalar mode fields in older schemas are explicitly interpreted by schema version, never guessed. See [[01 - Architecture/Portfolio Accounting/Capital Allocation]], [[01 - Architecture/Execution/Approval Workflow]] and [[09 - Performance/Agent Statistics]].
+
+## Phase 6 durable execution and Agent 5 additions — designed
+
+These records are target architecture and are not implemented:
+
+| Record | Required identity/content | Integrity rule |
+| --- | --- | --- |
+| EconomicTransitionCommand/Event | run, scheduler position, owner/entity, command kind, causal parents, expected revision, balanced effects | Unique idempotency key; cursor/effects/evidence commit together |
+| FxObservation/Conversion | source/methodology, pair, event/available time, price side, quality, currencies/amounts/cost | No use before availability; conversion legs balance by currency |
+| DurableRunCheckpoint | manifest/schedule, monotonic position, journal predecessor/hash, economic/policy projection hashes | Store chooses greatest committed checkpoint; rollback/divergence fails closed |
+| Agent5EconomicEntity | entity/top-level account/allocation, initial contribution, state, revision, survival/death policies | No external flow after initialization; descendants reconcile to this root |
+| InternalAllocation | entity, parent/child, available/reserved/committed amount, revision | Exclusive claim against existing entity capital; no negative/duplicate capacity |
+| Agent5PolicyVersion | predecessor, frozen envelope, organization root/hash, causal effective position | Append-only; world/objective capabilities cannot expand in-run |
+| SubAgentLifecycleEvent | entity, sub-agent, role/policy, create/drain/retire action, allocation and evidence | Stable non-reused identity; no retirement with unresolved exposure |
+| PolicyTransitionEvidence | old/new policy, requested action, causal evidence, scheduler position, validator result | Rejected and accepted actions retained; exact organization reconstruction |
+| SurvivalCheckpoint/DeathEvent | NLV inputs, FX/marks/costs/liabilities, activity epoch, ALIVE/AT_RISK/DEAD, estate status | Death is one idempotent irreversible transition; inactivity failure remains separate |
+| ModelDecisionEnvelope | provider/model/prompt/schema when known, exact input/output hashes, parent policy, request, validation, usage/cost | Captured output is replay input; no direct mutation or authority |
+
+See [[01 - Architecture/Execution/Replay and Simulation Architecture]], [[02 - Agents & Strategies/Autonomous Survival Agent]] and [[00 - Project/Decisions/ADR-034 - Atomic deterministic simulation execution]].

@@ -2,13 +2,26 @@
 
 Private research project investigating a systematic AI-assisted intraday scanner through deterministic rules, risk controls, realistic backtesting and eventual paper validation. Profitability is unproven; negative results are retained.
 
-Current state: Phases 1–5 are complete on `main`. PR #4 was independently reviewed by
-`Dekkerszz` with PASS and merged as `d08faa7ca3fdd3f35a053838f736d4d709d503d9`. Phase 5 adds
-deterministic Decimal risk sizing bound to complete source state, exclusive parent allocation
-ownership, relationally validated risk evidence, exception-atomic in-memory reservations and scoped
-safety locks. Phase 6 — causal backtesting and simulation — is next and has not started. Research
-baselines remain unvalidated. No scanner, portfolio P&L, broker, AI, order submission or execution
-exists.
+Current state: Phases 1–5 are complete on `main`. Phase 6 — causal backtesting and simulation — is
+in progress on `feat/phase-6-causal-simulation`. The foundation defines content-identified causal
+run/events, next-eligible-bar-open order/fill contracts, versioned costs, conserved Decimal portfolio
+records, deterministic trace serialization and an in-memory deterministic event scheduler. Only a
+fully validated typed replay artifact can create an executable scheduler. Process-local cursor
+authority issues current-state checkpoints and prevents in-process skip/rewind; content identity is
+not authentication and durable cross-process anti-rollback remains unimplemented. The bounded
+one-event causal orchestrator through `b76891f7a1d787c2c07d26c0f4dd6a42df55aada` is accepted. It
+evaluates the accepted Phase 3/4 contracts and Phase 5 reservation boundary with authoritative
+reconstruction checks. The first milestone 6.1 candidate failed independent review; its bounded
+workspace remediation uses cursor-bound creation, atomic resolver publication, authoritative terminal
+validation and a V2 run manifest containing the complete liquidity configuration. Claude's independent
+technical review (2026-09-18) found its six targeted defects resolved and full verification passing;
+independent competent human reviewer `Dekkerszz` then approved it via GitHub PR #5 (2026-09-18) within
+the stated Phase 6.1 scope, so Milestone 6.1 is accepted, though PR #5/the feature branch remain
+unmerged and Milestone 6.2 has not started. It creates no
+fill and performs no accounting or reservation transition. Atomic economic posting, causal cost/FX,
+durable recovery and future 4+1/Autonomous Survival Agent architecture remain unimplemented.
+Research baselines remain unvalidated. No complete execution loop, Agent 5, scanner,
+broker/provider/AI integration, PAPER/LIVE execution or external order authority exists.
 
 - [Project rules](docs/PROJECT_RULES.md) — authoritative governance.
 - [Agent instructions](AGENTS.md) — required entry point for future agents.

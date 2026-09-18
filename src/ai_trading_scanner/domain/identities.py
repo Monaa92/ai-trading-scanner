@@ -125,3 +125,95 @@ class SafetyStateId(Identifier):
 
 class ApprovalBindingId(Identifier):
     """Content-derived identity of immutable future approval evidence."""
+
+
+class SimulationRunId(Identifier):
+    """Content-derived identity of an immutable simulation run manifest."""
+
+
+class SimulationExecutionModelId(Identifier):
+    """Content-derived identity of a versioned simulation execution model."""
+
+
+class TransactionCostModelId(Identifier):
+    """Content-derived identity of a versioned transaction-cost model."""
+
+
+class MarketEventId(Identifier):
+    """Content-derived identity of a market event used during replay."""
+
+
+class ReplayEventId(Identifier):
+    """Content-derived identity of an ordered replay event envelope."""
+
+
+class ReplayScheduleId(Identifier):
+    """Content-derived identity of one canonical replay schedule."""
+
+
+class ReplaySchedulerCheckpointId(Identifier):
+    """Content-derived identity of one replay scheduler checkpoint."""
+
+
+class OrchestrationConfigurationId(Identifier):
+    """Content-derived identity of one causal orchestration configuration."""
+
+
+class OrchestrationResultId(Identifier):
+    """Content-derived identity of one causal orchestration evaluation."""
+
+
+class ReplayArtifactId(Identifier):
+    """Content-derived identity of one validated immutable replay artifact."""
+
+
+class SimulatedOrderId(Identifier):
+    """Content-derived identity of an immutable simulated order intent."""
+
+
+class OrderCreationCommandId(Identifier):
+    """Content-derived identity of one idempotent simulated-order command."""
+
+
+class OrderCreationReceiptId(Identifier):
+    """Content-derived identity of one simulated-order creation outcome."""
+
+
+class OrderProjectionId(Identifier):
+    """Content-derived identity of one immutable simulated-order projection."""
+
+
+class OrderCancellationCommandId(Identifier):
+    """Content-derived identity of one causally stamped cancellation command."""
+
+
+class OrderTerminalResolutionId(Identifier):
+    """Content-derived identity of one terminal simulated-order resolution."""
+
+
+class SimulationLiquidityModelId(Identifier):
+    """Content-derived identity of a deterministic simulation-liquidity profile."""
+
+
+class SimulatedFillId(Identifier):
+    """Content-derived identity of an immutable simulated fill."""
+
+
+class PositionId(Identifier):
+    """Identity of one long-only position episode."""
+
+
+class PositionChangeId(Identifier):
+    """Content-derived identity of an immutable position change."""
+
+
+class PortfolioSnapshotId(Identifier):
+    """Content-derived identity of an immutable portfolio snapshot."""
+
+
+class RealizedTradeResultId(Identifier):
+    """Content-derived identity of an immutable realized trade result."""
+
+
+class SimulationResultId(Identifier):
+    """Content-derived identity of an immutable simulation result."""

@@ -1,6 +1,6 @@
 # Execution dimensions and privilege boundaries
 
-Status: Phase 1 domain/configuration model IMPLEMENTED. The Phase 5 candidate consumes these dimensions for risk/reservation restrictions without changing them; execution, broker connections and operational PAPER/LIVE remain unimplemented.
+Status: Phase 1 domain/configuration model IMPLEMENTED. Phase 5 consumes these dimensions for risk/reservation restrictions. The Phase 6 foundation permits only HISTORICAL_REPLAY/CAPTURED_REPLAY with SIMULATION in immutable run manifests; it does not change approval semantics or implement execution services. Broker connections and operational PAPER/LIVE remain unimplemented.
 
 Five fields remain distinct in every immutable agent configuration and run manifest:
 

@@ -1,6 +1,6 @@
 # Survival and capital preservation
 
-Specification, not evidence that an agent survives. No composite survival score is proposed. Present separate capital, time, drawdown, activity and intervention measures. [[03 - Experiments/Autonomous Experiments]] owns frozen starting conditions/endpoints; [[02 - Agents & Strategies/Shared Agent Rules/Agent Lifecycle]] owns operational states.
+Specification, not evidence that an agent survives. No composite survival score is proposed. Present separate capital, time, drawdown, activity and intervention measures. [[03 - Experiments/Autonomous Experiments]] owns frozen starting conditions/endpoints; [[02 - Agents & Strategies/Shared Agent Rules/Agent Lifecycle]] owns operational states. The future [[02 - Agents & Strategies/Autonomous Survival Agent]] uses these measurements plus a separate preregistered active-survival protocol; that protocol does not replace the ordinary metrics here.
 
 ## Endpoint and observation contract
 
@@ -34,3 +34,5 @@ Risk-of-ruin probability requires a precise ruin event/horizon, enough defensibl
 Later, a registered repeated-run cohort with defensible censoring could estimate `S_hat(t)=product_(t_j≤t)(1−d_j/n_j)` with risk-set sizes and intervals. [NIST's Kaplan–Meier description](https://itl.nist.gov/div898/handbook/apr/section2/apr215.htm) supports estimation from censored observations; suitability for these dependent trading runs still requires separate justification. Different strategies are not interchangeable replicates. Simulation/bootstrap ruin estimates must be labeled model-conditional, preserve regime/day dependence and cannot be presented as observed live probabilities. If support is inadequate, display NOT_ESTIMABLE and the reason.
 
 Normal-account deposits/withdrawals invalidate raw E/E0 as a preservation measure; display net flows, segmented/time-weighted returns and allocation history instead. Never rank a topped-up agent as surviving fixed-capital failure. Thresholds and analysis plans remain OPEN until preregistered using development evidence.
+
+For Agent 5, economic `DEAD` and protocol `INACTIVE_FAILURE` are distinct. Death uses conservative net liquidation value and registered execution viability, includes positions/costs/FX/liabilities and is irreversible. Inactivity ends active-survival participation without pretending capital vanished. Sub-agent creation does not add independent survival paths; descendants share one economic entity and one death event. Finite-horizon ALIVE observations remain censored, not infinite survival.

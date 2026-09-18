@@ -12,6 +12,8 @@ Reservation acquires a proposal-specific duplicate guard, resolves the scope und
 
 This is an in-process concurrency contract, not durable accounting. Process loss, multiple workers, multiple coordinator instances and database failures are not covered; proposal uniqueness is process-local. Before Phase 6 can treat reservations as authoritative across restarts, the same read→validate→reserve parent+agent→persist reservation→commit boundary must use durable transactional storage, optimistic revisions/fencing and recovery evidence.
 
+The Phase 6 foundation adds separate immutable [[01 - Architecture/Portfolio Accounting/Portfolio Accounting]] records for cash partitions, positions, portfolio snapshots and realized results. It does not yet connect them to this coordinator. Reservation consumption/release and fill/accounting publication must become one tested causal transition before Phase 6 can be complete; contract objects alone do not close the durability or lifecycle gap.
+
 ## Three different quantities
 
 - **Broker account equity:** all marked assets/cash less liabilities in the funding account, including unallocated assets and other agents. Never supplied as every agent's sizing balance.
@@ -31,6 +33,8 @@ Within a reconciled funding account and consistent valuation basis, `account_equ
 Allocation/transfer and order reservation use one account coordinator transaction with agent/account revision checks and fencing. Transfers debit one bucket and credit another with linked balanced ledger events; no money is created. Withdrawals/reallocation can use only unencumbered settled cash, not open-position backing or UNKNOWN-order reservations. Concurrent allocation and order requests cannot both spend the same capacity. Deficits/unexplained reconciliation differences lock relevant agents/account until resolved. A parent-account cap is enforced across agents even when each independently passes its own cap.
 
 Four independent simulated EUR50 accounts have four separate funding namespaces. They are legitimate replicated experimental starting conditions, not permission to assign the same real EUR50 four times. Shared broker-paper funding uses a real internal allocation partition of that paper balance; account contention is disclosed. Independent experiments should avoid that coupling. See [[01 - Architecture/Agent Architecture]].
+
+The future Agent 5 architecture adds one internal allocation tree beneath one top-level economic entity. Descendant budgets debit the entity's unallocated capacity and remain encumbrances/claims inside its existing capital. Their available, reserved and committed amounts plus the entity remainder must reconcile at every checkpoint. Creating or nesting descendants never adds top-level equity, broker buying power or risk headroom. See [[02 - Agents & Strategies/Autonomous Survival Agent]].
 
 ## Deposits, withdrawals and normal changes
 

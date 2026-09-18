@@ -72,6 +72,13 @@ class _MutationJournal:
                 dict.__delitem__(mapping, key)
 
 
+def _restore_mapping(mapping: dict[Any, Any], snapshot: dict[Any, Any]) -> None:
+    """Restore one mapping while bypassing failure-injecting dict overrides."""
+    dict.clear(mapping)
+    for key, value in snapshot.items():
+        dict.__setitem__(mapping, key, value)
+
+
 class InMemoryCapitalCoordinator:
     """Local boundary with proposal→parent→allocation→registry nested lock order."""
 
@@ -210,6 +217,48 @@ class InMemoryCapitalCoordinator:
             self._scope_locks(existing.account_id, existing.allocation_id),
         ):
             return self._reservation(reservation_id)
+
+    @contextmanager
+    def orchestration_transaction(
+        self,
+        proposal: TradeProposal,
+        *,
+        account_id: AccountId,
+        allocation_id: AllocationId,
+    ) -> Iterator[None]:
+        """Keep one proposal reservation reversible until orchestration commits."""
+        with (
+            self._proposal_guard(proposal.proposal_id),
+            self._scope_locks(account_id, allocation_id),
+            self._registry_lock,
+        ):
+            parent = self._parent(account_id)
+            allocation = self._allocation(allocation_id)
+            if (
+                allocation.account_id != account_id
+                or allocation.allocation_id != allocation_id
+                or allocation.agent_id != proposal.agent_id
+            ):
+                raise ReservationTransitionError(
+                    "orchestration transaction capital ownership mismatch"
+                )
+            parent_before = parent
+            allocation_before = allocation
+            account_reservations = self._reservations_by_account[account_id]
+            account_reservations_before = dict(account_reservations)
+            reservations_before = dict(self._reservations)
+            risk_decisions_before = dict(self._risk_decisions)
+            proposal_reservations_before = dict(self._proposal_reservations)
+            try:
+                yield
+            except BaseException:
+                dict.__setitem__(self._parents, account_id, parent_before)
+                dict.__setitem__(self._allocations, allocation_id, allocation_before)
+                _restore_mapping(account_reservations, account_reservations_before)
+                _restore_mapping(self._reservations, reservations_before)
+                _restore_mapping(self._risk_decisions, risk_decisions_before)
+                _restore_mapping(self._proposal_reservations, proposal_reservations_before)
+                raise
 
     def activate_lock(self, lock: SafetyLock) -> SafetyLock:
         if lock.scope is SafetyLockScope.PARENT_ACCOUNT:
