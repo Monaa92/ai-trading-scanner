@@ -1,17 +1,21 @@
-"""Immutable causal FX evidence and conversion-policy contracts for Phase 6.2.
+"""Immutable causal FX evidence, conversion-policy contracts and pure causal
+observation selection for Phase 6.2.
 
 Pure and evidence-only. This module defines what an FX observation and an FX
-conversion policy *are* and validates their internal consistency; it does not
-select among observations, compute a conversion, build balanced ledger legs,
-bind into the run manifest, or post any economic effect. No FX rate, quote
-convention or staleness threshold has an engine-supplied default: every value
-is caller-supplied evidence or an explicit, versioned policy choice.
+conversion policy *are* and validates their internal consistency, and
+provides a pure selection function over an already causally released
+observation prefix. It does not compute a conversion, select a quote side,
+build balanced ledger legs, bind into the run manifest, or post any economic
+effect. No FX rate, quote convention or staleness threshold has an
+engine-supplied default: every value is caller-supplied evidence or an
+explicit, versioned policy choice.
 """
 
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Annotated, Literal, Self
@@ -265,4 +269,87 @@ def calculate_fx_conversion_policy_id(
 ) -> FxConversionPolicyId:
     return FxConversionPolicyId.parse(
         sha256_content_id_v2(_identity_content(configuration, "fx_conversion_policy_id"))
+    )
+
+
+class FxObservationUnavailableReason(StrEnum):
+    """Typed reason a causal FX observation selection could not be completed."""
+
+    NO_ELIGIBLE_OBSERVATION = "NO_ELIGIBLE_OBSERVATION"
+
+
+class FxObservationUnavailable(BaseModel):
+    """Pure typed evidence that no released FX observation was eligible at T.
+
+    This is a plain return value from `select_eligible_fx_observation`, not a
+    posted, stored or content-identified record. If a later step persists
+    this evidence into a replay trace, it should gain a content identity
+    then, mirroring every other Phase 6 evidence contract.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reason: FxObservationUnavailableReason
+    evaluated_at: datetime
+    fx_conversion_policy_id: FxConversionPolicyId
+
+
+def select_eligible_fx_observation(
+    released_prefix: Sequence[FxObservationReference],
+    policy: FxConversionPolicyConfiguration,
+    evaluated_at: datetime,
+) -> FxObservationReference | FxObservationUnavailable:
+    """Pure selection over an already causally released FX observation prefix.
+
+    Callers must supply a prefix already limited to what is causally released
+    as of `evaluated_at` (the same trust boundary `order_resolution.py`'s
+    candidate filters place on their caller's released view); this function
+    additionally enforces `available_at <= evaluated_at` itself rather than
+    only trusting that precondition, matching the project's established
+    defense-in-depth pattern. It never selects an observation whose
+    `available_at` is after `evaluated_at`, regardless of what the caller
+    supplied.
+
+    Eligibility requires, for every candidate: the observation's currency
+    pair matches the policy's `base_currency`/`trading_currency`; quality is
+    exactly `VALIDATED` (`UNVALIDATED` and `SUSPECT` are always ineligible,
+    with no override or toggle); `available_at <= evaluated_at`; and
+    `evaluated_at - observed_at <= policy.maximum_observation_staleness_seconds`
+    — age is measured from `observed_at`, not `available_at`, so an
+    observation that was already old when it became available cannot slip
+    through by being used the instant it is published.
+
+    Among eligible candidates, the one with the latest `observed_at` wins,
+    tie-broken by `(observed_at, available_at, fx_observation_id)`
+    descending. When no candidate qualifies, returns typed
+    `FxObservationUnavailable` evidence rather than fabricating a rate or
+    borrowing a future/stale one.
+
+    Does not check quote convention, compute a conversion, or select a
+    bid/ask side; that boundary belongs to a later, separately reviewed step.
+    """
+    evaluated_at = _aware_utc(evaluated_at)
+    staleness_limit = timedelta(seconds=policy.maximum_observation_staleness_seconds)
+    candidates = [
+        observation
+        for observation in released_prefix
+        if observation.base_currency == policy.base_currency
+        and observation.quote_currency == policy.trading_currency
+        and observation.quality_status is FxObservationQualityStatus.VALIDATED
+        and observation.available_at <= evaluated_at
+        and (evaluated_at - observation.observed_at) <= staleness_limit
+    ]
+    if not candidates:
+        return FxObservationUnavailable(
+            reason=FxObservationUnavailableReason.NO_ELIGIBLE_OBSERVATION,
+            evaluated_at=evaluated_at,
+            fx_conversion_policy_id=policy.fx_conversion_policy_id,
+        )
+    return max(
+        candidates,
+        key=lambda observation: (
+            observation.observed_at,
+            observation.available_at,
+            str(observation.fx_observation_id),
+        ),
     )

@@ -1,14 +1,16 @@
-"""Behavior tests for the Phase 6.2 FX observation and conversion-policy contracts.
+"""Behavior tests for the Phase 6.2 FX observation, conversion-policy and pure
+causal observation-selection contracts.
 
-These contracts are pure evidence/policy shapes only. No FX rate, quote
-convention or staleness threshold has an engine default, and this milestone
-implements no causal selection, conversion, balanced-leg calculation or
-manifest binding — several tests below assert that boundary explicitly.
+The observation/policy contracts are pure evidence/policy shapes: no FX rate,
+quote convention or staleness threshold has an engine default. Selection is
+pure causal filtering only — no conversion, quote-side selection,
+balanced-leg calculation or manifest binding; several tests below assert
+that boundary explicitly.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -19,9 +21,12 @@ from ai_trading_scanner.simulation import (
     FxConversionPolicyConfiguration,
     FxObservationQualityStatus,
     FxObservationReference,
+    FxObservationUnavailable,
+    FxObservationUnavailableReason,
     FxQuoteConvention,
     calculate_fx_conversion_policy_id,
     calculate_fx_observation_id,
+    select_eligible_fx_observation,
 )
 from ai_trading_scanner.simulation import fx as fx_module
 
@@ -477,14 +482,204 @@ def test_policy_identity_changes_with_rounding_policy() -> None:
 # --- Explicit scope boundary for this milestone -----------------------------
 
 
-def test_fx_module_implements_no_resolver_execution_or_posting_symbols() -> None:
-    """This bounded step is evidence/policy contracts only; no resolver or posting."""
+def test_fx_module_implements_no_conversion_execution_or_posting_symbols() -> None:
+    """Pure observation selection exists; conversion/posting/quote-side logic does not."""
     forbidden_names = {
         "resolve_fx_conversion",
-        "select_fx_observation",
+        "select_quote_side",
         "FxConversionLegPair",
         "post_fx_conversion",
         "apply_fx_conversion",
     }
     exported = set(dir(fx_module))
     assert forbidden_names.isdisjoint(exported)
+    assert "select_eligible_fx_observation" in exported
+
+
+# --- select_eligible_fx_observation (pure causal selection) -----------------
+
+_T = datetime(2026, 1, 2, 15, 0, 0, tzinfo=UTC)
+
+
+def _selection_policy(**changes: object) -> FxConversionPolicyConfiguration:
+    changes.setdefault("maximum_observation_staleness_seconds", 60)
+    return _policy(**changes)
+
+
+def _eligible_observation(**changes: object) -> FxObservationReference:
+    """A baseline observation that is fully eligible relative to _T under
+    _selection_policy()'s default 60-second staleness threshold."""
+    defaults: dict[str, object] = {
+        "observed_at": _T - timedelta(seconds=30),
+        "available_at": _T - timedelta(seconds=10),
+        "quality_status": FxObservationQualityStatus.VALIDATED,
+    }
+    defaults.update(changes)
+    return _observation(**defaults)
+
+
+def test_selection_excludes_future_availability() -> None:
+    policy = _selection_policy()
+    observation = _eligible_observation(available_at=_T + timedelta(seconds=1))
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert isinstance(result, FxObservationUnavailable)
+    assert result.reason is FxObservationUnavailableReason.NO_ELIGIBLE_OBSERVATION
+
+
+def test_selection_accepts_availability_exactly_at_evaluated_at() -> None:
+    policy = _selection_policy()
+    observation = _eligible_observation(available_at=_T)
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert result == observation
+
+
+def test_selection_rejects_observation_that_was_already_stale_when_available() -> None:
+    """An observation observed long ago but only just published must still be
+    rejected: staleness is measured from observed_at, not available_at. Under
+    the old (available_at-based) definition this would wrongly show zero
+    staleness and be accepted."""
+    policy = _selection_policy(maximum_observation_staleness_seconds=60)
+    observation = _eligible_observation(
+        observed_at=_T - timedelta(seconds=1000),
+        available_at=_T,
+    )
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert isinstance(result, FxObservationUnavailable)
+    assert result.reason is FxObservationUnavailableReason.NO_ELIGIBLE_OBSERVATION
+
+
+def test_selection_accepts_observation_exactly_at_staleness_boundary() -> None:
+    policy = _selection_policy(maximum_observation_staleness_seconds=60)
+    observation = _eligible_observation(
+        observed_at=_T - timedelta(seconds=60), available_at=_T - timedelta(seconds=1)
+    )
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert result == observation
+
+
+def test_selection_rejects_observation_one_second_beyond_staleness_boundary() -> None:
+    policy = _selection_policy(maximum_observation_staleness_seconds=60)
+    observation = _eligible_observation(
+        observed_at=_T - timedelta(seconds=61), available_at=_T - timedelta(seconds=1)
+    )
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert isinstance(result, FxObservationUnavailable)
+
+
+@pytest.mark.parametrize(
+    "quality_status",
+    [FxObservationQualityStatus.UNVALIDATED, FxObservationQualityStatus.SUSPECT],
+)
+def test_selection_rejects_non_validated_quality(
+    quality_status: FxObservationQualityStatus,
+) -> None:
+    policy = _selection_policy()
+    observation = _eligible_observation(quality_status=quality_status)
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert isinstance(result, FxObservationUnavailable)
+
+
+def test_selection_accepts_validated_quality() -> None:
+    policy = _selection_policy()
+    observation = _eligible_observation(quality_status=FxObservationQualityStatus.VALIDATED)
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert result == observation
+
+
+def test_selection_rejects_currency_pair_mismatch() -> None:
+    policy = _selection_policy(base_currency="EUR", trading_currency="USD")
+    observation = _eligible_observation(base_currency="GBP", quote_currency="USD")
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert isinstance(result, FxObservationUnavailable)
+
+
+def test_selection_prefers_latest_observed_at() -> None:
+    policy = _selection_policy()
+    older = _eligible_observation(
+        observed_at=_T - timedelta(seconds=40), source_record_id="fx:older"
+    )
+    newer = _eligible_observation(
+        observed_at=_T - timedelta(seconds=10), source_record_id="fx:newer"
+    )
+    result = select_eligible_fx_observation([older, newer], policy, _T)
+    assert result == newer
+
+
+def test_selection_tie_breaks_by_available_at_when_observed_at_matches() -> None:
+    policy = _selection_policy()
+    same_time = _T - timedelta(seconds=30)
+    earlier_available = _eligible_observation(
+        observed_at=same_time, available_at=_T - timedelta(seconds=20), source_record_id="fx:a"
+    )
+    later_available = _eligible_observation(
+        observed_at=same_time, available_at=_T - timedelta(seconds=5), source_record_id="fx:b"
+    )
+    result = select_eligible_fx_observation([earlier_available, later_available], policy, _T)
+    assert result == later_available
+
+
+def test_selection_tie_breaks_by_observation_id_when_times_match() -> None:
+    policy = _selection_policy()
+    same_time = _T - timedelta(seconds=30)
+    same_available = _T - timedelta(seconds=10)
+    first = _eligible_observation(
+        observed_at=same_time, available_at=same_available, source_record_id="fx:aaa"
+    )
+    second = _eligible_observation(
+        observed_at=same_time, available_at=same_available, source_record_id="fx:zzz"
+    )
+    assert first.fx_observation_id != second.fx_observation_id
+    expected = max([first, second], key=lambda o: str(o.fx_observation_id))
+    result = select_eligible_fx_observation([first, second], policy, _T)
+    assert result == expected
+
+
+def test_selection_empty_prefix_fails_closed() -> None:
+    policy = _selection_policy()
+    result = select_eligible_fx_observation([], policy, _T)
+    assert isinstance(result, FxObservationUnavailable)
+    assert result.reason is FxObservationUnavailableReason.NO_ELIGIBLE_OBSERVATION
+    assert result.evaluated_at == _T
+    assert result.fx_conversion_policy_id == policy.fx_conversion_policy_id
+
+
+def test_selection_filters_ineligible_candidates_from_mixed_prefix() -> None:
+    policy = _selection_policy()
+    future = _eligible_observation(
+        available_at=_T + timedelta(seconds=1), source_record_id="fx:future"
+    )
+    stale = _eligible_observation(
+        observed_at=_T - timedelta(seconds=1000), source_record_id="fx:stale"
+    )
+    suspect = _eligible_observation(
+        quality_status=FxObservationQualityStatus.SUSPECT, source_record_id="fx:suspect"
+    )
+    wrong_pair = _eligible_observation(
+        base_currency="GBP", quote_currency="USD", source_record_id="fx:wrongpair"
+    )
+    eligible = _eligible_observation(
+        observed_at=_T - timedelta(seconds=5),
+        available_at=_T - timedelta(seconds=3),
+        source_record_id="fx:eligible",
+    )
+    result = select_eligible_fx_observation(
+        [future, stale, suspect, wrong_pair, eligible], policy, _T
+    )
+    assert result == eligible
+
+
+def test_selection_ignores_quote_convention_mismatch() -> None:
+    """This slice does not implement quote-side selection; an observation whose
+    quote_convention differs from the policy's remains eligible on causal
+    grounds alone."""
+    policy = _selection_policy(quote_convention=FxQuoteConvention.DECLARED_REFERENCE)
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert result == observation
+
+
+def test_selection_rejects_naive_evaluated_at() -> None:
+    policy = _selection_policy()
+    observation = _eligible_observation()
+    with pytest.raises(ValueError, match="timezone-aware"):
+        select_eligible_fx_observation([observation], policy, datetime(2026, 1, 2, 15, 0, 0))
