@@ -15,7 +15,9 @@ reconstruction checks. The first milestone 6.1 candidate failed independent revi
 workspace remediation uses cursor-bound creation, atomic resolver publication, authoritative terminal
 validation and a V2 run manifest containing the complete liquidity configuration. Claude's independent
 technical review (2026-09-18) found its six targeted defects resolved and full verification passing;
-independent competent human review and formal approval remain outstanding and it is not merged. It creates no
+independent competent human reviewer `Dekkerszz` then approved it via GitHub PR #5 (2026-09-18) within
+the stated Phase 6.1 scope, so Milestone 6.1 is accepted, though PR #5/the feature branch remain
+unmerged and Milestone 6.2 has not started. It creates no
 fill and performs no accounting or reservation transition. Atomic economic posting, causal cost/FX,
 durable recovery and future 4+1/Autonomous Survival Agent architecture remain unimplemented.
 Research baselines remain unvalidated. No complete execution loop, Agent 5, scanner,
