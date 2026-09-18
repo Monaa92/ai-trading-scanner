@@ -80,6 +80,22 @@ Independent AI technical review by Codex examined commit `1179c356653de4ffa668a0
 
 **Scope of this record:** this section records Codex's AI technical review, Claude's automated verification, and the owner's functional approval of one narrow fix — none of these is independent competent human review, and per `docs/PROJECT_RULES.md` none by itself constitutes formal project acceptance of this fix. It is not Milestone 6.2 acceptance and does not authorize merging this branch, starting the FX resolver, or any other Phase 6.2 component. Independent human technical review of this fix remains pending; Milestone 6.2 as a whole remains unreviewed and unaccepted.
 
+### Milestone 6.2 — FX observation-selection slice, focused Codex review, 2026-09-18
+
+Codex performed a **focused** independent review of the pure causal FX observation-selection slice (`select_eligible_fx_observation`, `FxObservationUnavailable`, `FxObservationUnavailableReason` in `simulation/fx.py`) before it was committed, reviewing the actual uncommitted implementation directly rather than a description of it. The commit produced afterward is `d7e3667ed9ae8f84c36588eb29858a992f7637ae`.
+
+**Reviewed correctness areas (four, specifically):** (1) causality — the selection never chooses an observation whose `available_at` is after the evaluation time, and only operates on an already causally released prefix; (2) `VALIDATED`-only eligibility — `UNVALIDATED` and `SUSPECT` observations are always excluded, with no override or toggle, per the owner's prior decision; (3) `observed_at`-based staleness — age is measured from `observed_at`, not `available_at`, so an observation already old when it became available cannot pass by being used immediately; (4) deterministic selection and fail-closed behavior — freshest-`observed_at`-wins with a documented tie-break, and typed `FxObservationUnavailable` evidence (never a fabricated or borrowed rate) when nothing qualifies.
+
+**Codex review result: no critical findings** in these four reviewed areas.
+
+**Verification independently executed by Codex:** the 16 focused selection tests in `tests/test_simulation_fx.py` — **16 passed, 64 deselected** (the remaining FX-contract tests in that file were not run in this pass).
+
+**Codex did not run** in this pass: the full locked test suite, `ruff check`, `mypy`, or a comprehensive repository review. This was a focused review of the selection slice only.
+
+**Verification executed by Claude** (reported previously, attributed here to Claude, not Codex): the full suite — 871 passed, 0 failed, 0 errors, 0 skipped; `ruff check .` — all checks passed; `ruff format --check .` — clean; `mypy` (strict) — no issues across 88 source files; `git diff --check` — clean.
+
+**Scope of this record:** a focused review of one slice's four specific correctness areas, backed by a focused 16-test run from Codex and a separate full-suite/static-check run from Claude, is **not** a complete independent review of this slice, **not** independent competent human review, and per `docs/PROJECT_RULES.md` does **not** constitute formal acceptance of this slice, this fix, or any part of it. It does not authorize merging this branch, implementing currency conversion, quote-side selection, fees, or any further Phase 6.2 component. Independent human technical review of this slice, and Milestone 6.2 as a whole, remain pending and unaccepted.
+
 Still absent: actual fill creation, reservation consumption/release, cost/FX calculation, transaction-safe fill/accounting, fixed protection, durable persistence, cross-process recovery, complete position/P&L lifecycle, final isolated runner, Agent 5, broker/provider/network/AI integrations, PAPER and LIVE. The target design is recorded in [[01 - Architecture/Execution/Replay and Simulation Architecture]], [[02 - Agents & Strategies/Autonomous Survival Agent]] and [[03 - Experiments/4+1 Historical Experiment]].
 
 See [[06 - Testing/Phase 6 Completion Criteria]], [[06 - Testing/Backtesting]], [[00 - Project/Decisions/ADR-033 - Deterministic Phase 6 replay foundation]] and [[00 - Project/Current Status]].
