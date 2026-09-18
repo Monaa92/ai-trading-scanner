@@ -185,9 +185,19 @@ def test_observation_accepts_checksum_without_record_id() -> None:
     assert observation.source_checksum == "sha256:" + "a" * 64
 
 
-def test_observation_rejects_blank_source_record_id_and_checksum() -> None:
+def test_observation_rejects_whitespace_only_record_id_with_no_checksum() -> None:
     with pytest.raises(ValidationError, match="source_record_id or source_checksum"):
-        _observation(source_record_id="   ", source_checksum="")
+        _observation(source_record_id="   ", source_checksum=None)
+
+
+def test_observation_rejects_empty_checksum() -> None:
+    with pytest.raises(ValidationError, match="source_checksum must be nonblank"):
+        _observation(source_record_id=None, source_checksum="")
+
+
+def test_observation_rejects_whitespace_only_checksum() -> None:
+    with pytest.raises(ValidationError, match="source_checksum must be nonblank"):
+        _observation(source_record_id=None, source_checksum="   ")
 
 
 def test_observation_has_no_default_provenance_or_quality_fields() -> None:
@@ -233,6 +243,76 @@ def test_observation_identity_changes_with_quality_status() -> None:
     first = _observation(quality_status=FxObservationQualityStatus.UNVALIDATED)
     second = _observation(quality_status=FxObservationQualityStatus.SUSPECT)
     assert first.fx_observation_id != second.fx_observation_id
+
+
+@pytest.mark.parametrize(
+    "blank_field",
+    [
+        "provider",
+        "methodology_version",
+        "source_dataset_id",
+        "source_dataset_version",
+        "ingestion_provenance",
+    ],
+)
+def test_observation_rejects_empty_required_provenance_field(blank_field: str) -> None:
+    # An empty string is caught by the field's own min_length=1 constraint
+    # (pydantic's built-in "at least 1 character" message); whitespace-only
+    # values reach the custom nonblank check below instead.
+    with pytest.raises(ValidationError, match="at least 1 character|nonblank"):
+        _observation(**{blank_field: ""})
+
+
+@pytest.mark.parametrize(
+    "blank_field",
+    [
+        "provider",
+        "methodology_version",
+        "source_dataset_id",
+        "source_dataset_version",
+        "ingestion_provenance",
+    ],
+)
+def test_observation_rejects_whitespace_only_required_provenance_field(blank_field: str) -> None:
+    with pytest.raises(ValidationError, match="nonblank"):
+        _observation(**{blank_field: "   \t  "})
+
+
+@pytest.mark.parametrize(
+    "malformed_checksum",
+    [
+        "not-a-checksum",
+        "sha256:" + "a" * 63,  # too short
+        "sha256:" + "a" * 65,  # too long
+        "sha256:" + "A" * 64,  # uppercase hex not accepted
+        "sha256:" + "g" * 64,  # non-hex characters
+        "md5:" + "a" * 32,  # wrong algorithm prefix
+        "a" * 64,  # missing 'sha256:' prefix entirely
+    ],
+)
+def test_observation_rejects_malformed_checksum(malformed_checksum: str) -> None:
+    with pytest.raises(ValidationError, match="source_checksum must match"):
+        _observation(source_checksum=malformed_checksum)
+
+
+def test_observation_rejects_malformed_checksum_as_sole_locator() -> None:
+    """A malformed checksum is rejected even when it is the only supplied locator,
+    not only when a valid source_record_id is also present."""
+    with pytest.raises(ValidationError, match="source_checksum must match"):
+        _observation(source_record_id=None, source_checksum="not-a-real-checksum")
+
+
+def test_observation_accepts_valid_checksum_as_sole_locator() -> None:
+    observation = _observation(source_record_id=None, source_checksum="sha256:" + "c" * 64)
+    assert observation.source_checksum == "sha256:" + "c" * 64
+
+
+def test_observation_accepts_valid_provenance_with_both_locators() -> None:
+    observation = _observation(
+        source_record_id="fx:test-only:1", source_checksum="sha256:" + "d" * 64
+    )
+    assert observation.source_record_id == "fx:test-only:1"
+    assert observation.source_checksum == "sha256:" + "d" * 64
 
 
 # --- Decimal-only public identity boundary (Finding 3) ----------------------

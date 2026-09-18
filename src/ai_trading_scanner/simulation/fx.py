@@ -10,18 +10,26 @@ is caller-supplied evidence or an explicit, versioned policy choice.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from ai_trading_scanner.domain import FxConversionPolicyId, FxObservationId
 from ai_trading_scanner.domain.content_identity import sha256_content_id_v2
 from ai_trading_scanner.simulation.costs import CostRoundingPolicy
 
 _CURRENCY_PATTERN = r"^[A-Z]{3}$"
+
+# Reuses this project's own content-identity format (`sha256:` + 64 lowercase
+# hex characters, as produced by ai_trading_scanner.domain.content_identity)
+# rather than inventing a new checksum convention. A checksum is presumed to
+# identify the exact upstream FX record byte-for-byte; any other algorithm or
+# encoding requires a new, explicitly named field and schema version.
+_CHECKSUM_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def _identity_content(
@@ -118,6 +126,16 @@ class FxObservationReference(BaseModel):
     explicit quality classification. All of them are bound into
     `fx_observation_id`, so changing any one changes the observation's
     identity.
+
+    `provider`, `methodology_version`, `source_dataset_id`,
+    `source_dataset_version` and `ingestion_provenance` must be nonblank
+    after stripping whitespace; a string that is empty or contains only
+    whitespace is rejected exactly like a missing value. When supplied,
+    `source_checksum` must match `sha256:` followed by 64 lowercase hex
+    characters — this project's own content-identity format — and is
+    rejected as malformed otherwise, whether or not `source_record_id` is
+    also present. At least one of `source_record_id`/`source_checksum` must
+    still be present and meaningful.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -148,6 +166,32 @@ class FxObservationReference(BaseModel):
     @classmethod
     def normalize_time(cls, value: datetime) -> datetime:
         return _aware_utc(value)
+
+    @field_validator(
+        "provider",
+        "methodology_version",
+        "source_dataset_id",
+        "source_dataset_version",
+        "ingestion_provenance",
+    )
+    @classmethod
+    def reject_blank_provenance_text(cls, value: str, info: ValidationInfo) -> str:
+        if not _is_meaningful_text(value):
+            raise ValueError(f"{info.field_name} must be nonblank, not empty or whitespace-only")
+        return value
+
+    @field_validator("source_checksum")
+    @classmethod
+    def validate_checksum_format(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not _is_meaningful_text(value):
+            raise ValueError("source_checksum must be nonblank when supplied")
+        if not _CHECKSUM_PATTERN.fullmatch(value):
+            raise ValueError(
+                "source_checksum must match 'sha256:' followed by 64 lowercase hex characters"
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_reference(self) -> Self:
