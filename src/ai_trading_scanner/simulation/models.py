@@ -28,6 +28,7 @@ from ai_trading_scanner.domain import (
     SimulatedFillId,
     SimulatedOrderId,
     SimulationExecutionModelId,
+    SimulationLiquidityModelId,
     SimulationRunId,
     StrategyConfigurationId,
     StrategyDecisionId,
@@ -230,6 +231,49 @@ def calculate_execution_model_id(
     return SimulationExecutionModelId.parse(sha256_content_id_v2(content))
 
 
+class ZeroVolumePolicy(StrEnum):
+    """Conservative behavior when an eligible bar reports no executed volume."""
+
+    REJECT_FULL_FILL = "REJECT_FULL_FILL"
+
+
+class SimulationLiquidityConfiguration(BaseModel):
+    """Immutable full-fill liquidity assumptions bound into V2 run identity."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    liquidity_model_id: SimulationLiquidityModelId
+    schema_version: Literal["simulation-liquidity-v1"] = "simulation-liquidity-v1"
+    model_version: str = Field(min_length=1)
+    maximum_bar_volume_participation: Annotated[Decimal, Field(gt=0, le=1, allow_inf_nan=False)]
+    zero_volume_policy: Literal[ZeroVolumePolicy.REJECT_FULL_FILL] = (
+        ZeroVolumePolicy.REJECT_FULL_FILL
+    )
+    partial_fills_supported: Literal[False] = False
+
+    @field_validator("maximum_bar_volume_participation", mode="before")
+    @classmethod
+    def reject_float_participation(cls, value: object) -> object:
+        return _reject_float(value, "volume participation")
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        if self.liquidity_model_id != calculate_liquidity_model_id(self):
+            raise ValueError("simulation liquidity identity does not match content")
+        return self
+
+
+def calculate_liquidity_model_id(
+    configuration: SimulationLiquidityConfiguration | dict[str, object],
+) -> SimulationLiquidityModelId:
+    content = _normalized_decimal_content(
+        configuration,
+        "liquidity_model_id",
+        ("maximum_bar_volume_participation",),
+    )
+    return SimulationLiquidityModelId.parse(sha256_content_id_v2(content))
+
+
 class TransactionCostConfiguration(BaseModel):
     """Versioned monetary cost inputs; numeric schedules remain experiment configuration."""
 
@@ -359,7 +403,9 @@ class SimulationRunManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: SimulationRunId
-    schema_version: Literal["simulation-run-manifest-v1"] = "simulation-run-manifest-v1"
+    schema_version: Literal["simulation-run-manifest-v1", "simulation-run-manifest-v2"] = (
+        "simulation-run-manifest-v1"
+    )
     dataset_id: DatasetId
     account_id: AccountId
     allocation_id: AllocationId
@@ -374,6 +420,7 @@ class SimulationRunManifest(BaseModel):
     configuration_version_id: ConfigurationVersionId
     execution_model_id: SimulationExecutionModelId
     cost_model_id: TransactionCostModelId
+    liquidity_configuration: SimulationLiquidityConfiguration | None = None
     replay_tie_break_policy: Literal[ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1] = (
         ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1
     )
@@ -389,6 +436,12 @@ class SimulationRunManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_manifest(self) -> Self:
+        if (self.schema_version == "simulation-run-manifest-v2") != (
+            self.liquidity_configuration is not None
+        ):
+            raise ValueError(
+                "V2 run manifests require liquidity configuration and V1 manifests forbid it"
+            )
         if self.execution_dimensions.execution_environment is not ExecutionEnvironment.SIMULATION:
             raise ValueError("Phase 6 run manifests permit SIMULATION only")
         if self.execution_dimensions.data_run_mode not in {
@@ -410,6 +463,11 @@ def calculate_simulation_run_id(
 ) -> SimulationRunId:
     content = _normalized_decimal_content(manifest, "run_id", ("starting_capital",))
     content.setdefault("replay_tie_break_policy", ReplayTieBreakPolicy.SEMANTIC_PAYLOAD_V1)
+    if content.get("schema_version", "simulation-run-manifest-v1") == (
+        "simulation-run-manifest-v1"
+    ):
+        # Preserve all accepted V1 run identities after adding the optional V2 field.
+        content.pop("liquidity_configuration", None)
     return SimulationRunId.parse(sha256_content_id_v2(content))
 
 

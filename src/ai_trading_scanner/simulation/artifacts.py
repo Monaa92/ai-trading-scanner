@@ -71,6 +71,7 @@ class ExecutionResolutionOutcome(StrEnum):
 class ExecutionResolutionReason(StrEnum):
     ORDER_VALIDITY_EXPIRED = "ORDER_VALIDITY_EXPIRED"
     NO_ELIGIBLE_SAME_SESSION_BAR = "NO_ELIGIBLE_SAME_SESSION_BAR"
+    END_OF_DATA_BEFORE_EXPIRY = "END_OF_DATA_BEFORE_EXPIRY"
     CANCELLATION_EFFECTIVE = "CANCELLATION_EFFECTIVE"
     INSUFFICIENT_LIQUIDITY = "INSUFFICIENT_LIQUIDITY"
     EXECUTION_POLICY_REJECTED = "EXECUTION_POLICY_REJECTED"
@@ -97,9 +98,13 @@ class ExecutionResolutionPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self) -> Self:
-        extended_v3 = self.outcome is ExecutionResolutionOutcome.CANCELLED or (
-            self.outcome is ExecutionResolutionOutcome.REJECTED
-            and self.reason is ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY
+        extended_v3 = (
+            self.outcome is ExecutionResolutionOutcome.CANCELLED
+            or self.reason is ExecutionResolutionReason.END_OF_DATA_BEFORE_EXPIRY
+            or (
+                self.outcome is ExecutionResolutionOutcome.REJECTED
+                and self.reason is ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY
+            )
         )
         required_schema = (
             "execution-resolution-payload-v3" if extended_v3 else "execution-resolution-payload-v2"
@@ -112,7 +117,8 @@ class ExecutionResolutionPayload(BaseModel):
                 ExecutionResolutionReason.ORDER_VALIDITY_EXPIRED
             ),
             ExecutionResolutionOutcome.NO_ELIGIBLE_DATA: (
-                ExecutionResolutionReason.NO_ELIGIBLE_SAME_SESSION_BAR
+                ExecutionResolutionReason.NO_ELIGIBLE_SAME_SESSION_BAR,
+                ExecutionResolutionReason.END_OF_DATA_BEFORE_EXPIRY,
             ),
             ExecutionResolutionOutcome.CANCELLED: (
                 ExecutionResolutionReason.CANCELLATION_EFFECTIVE

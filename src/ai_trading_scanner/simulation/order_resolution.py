@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from enum import StrEnum
@@ -56,6 +57,7 @@ from ai_trading_scanner.simulation.models import (
     SimulatedOrderSide,
     SimulatedOrderType,
     SimulationExecutionConfiguration,
+    SimulationLiquidityConfiguration,
     calculate_simulated_order_id,
 )
 from ai_trading_scanner.simulation.orchestration import (
@@ -84,48 +86,6 @@ def _reject_float(value: object, label: str) -> object:
     if isinstance(value, float):
         raise ValueError(f"{label} must use Decimal or a decimal string, not float")
     return value
-
-
-class ZeroVolumePolicy(StrEnum):
-    """Conservative behavior when an eligible bar reports no executed volume."""
-
-    REJECT_FULL_FILL = "REJECT_FULL_FILL"
-
-
-class SimulationLiquidityConfiguration(BaseModel):
-    """Explicit full-fill volume ceiling; it grants no partial-fill behavior."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    liquidity_model_id: SimulationLiquidityModelId
-    schema_version: Literal["simulation-liquidity-v1"] = "simulation-liquidity-v1"
-    model_version: str = Field(min_length=1)
-    maximum_bar_volume_participation: Annotated[Decimal, Field(gt=0, le=1, allow_inf_nan=False)]
-    zero_volume_policy: Literal[ZeroVolumePolicy.REJECT_FULL_FILL] = (
-        ZeroVolumePolicy.REJECT_FULL_FILL
-    )
-    partial_fills_supported: Literal[False] = False
-
-    @field_validator("maximum_bar_volume_participation", mode="before")
-    @classmethod
-    def reject_float_participation(cls, value: object) -> object:
-        return _reject_float(value, "volume participation")
-
-    @model_validator(mode="after")
-    def validate_identity(self) -> Self:
-        if self.liquidity_model_id != calculate_liquidity_model_id(self):
-            raise ValueError("simulation liquidity identity does not match content")
-        return self
-
-
-def calculate_liquidity_model_id(
-    configuration: SimulationLiquidityConfiguration | dict[str, object],
-) -> SimulationLiquidityModelId:
-    content = _without_id(configuration, "liquidity_model_id")
-    value = content.get("maximum_bar_volume_participation")
-    if value is not None and not isinstance(value, Decimal | float):
-        content["maximum_bar_volume_participation"] = Decimal(value)  # type: ignore[arg-type]
-    return SimulationLiquidityModelId.parse(sha256_content_id_v2(content))
 
 
 class OrderCreationOutcome(StrEnum):
@@ -170,7 +130,7 @@ class OrderCreationCommand(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     command_id: OrderCreationCommandId
-    schema_version: Literal["order-creation-command-v1"] = "order-creation-command-v1"
+    schema_version: Literal["order-creation-command-v2"] = "order-creation-command-v2"
     artifact_id: ReplayArtifactId
     orchestration_result_id: OrchestrationResultId
     run_id: SimulationRunId
@@ -183,13 +143,17 @@ class OrderCreationCommand(BaseModel):
     reservation_id: ReservationId
     execution_model_id: SimulationExecutionModelId
     liquidity_model_id: SimulationLiquidityModelId
+    schedule_id: ReplayScheduleId
+    scheduler_position: int = Field(gt=0)
+    created_at: datetime
 
     @classmethod
-    def create(
+    def _issue(
         cls,
         result: CausalOrchestrationResult,
         execution_configuration: SimulationExecutionConfiguration,
         liquidity_configuration: SimulationLiquidityConfiguration,
+        view: OrchestrationMarketView,
     ) -> OrderCreationCommand:
         if not isinstance(result.strategy_decision, TradeProposalDecision):
             raise ValueError("only a trade proposal can request simulated-order creation")
@@ -197,7 +161,7 @@ class OrderCreationCommand(BaseModel):
         if attempt is None or attempt.reservation is None:
             raise ValueError("simulated-order creation requires reservation evidence")
         content: dict[str, object] = {
-            "schema_version": "order-creation-command-v1",
+            "schema_version": "order-creation-command-v2",
             "artifact_id": result.artifact_id,
             "orchestration_result_id": result.orchestration_result_id,
             "run_id": result.run_id,
@@ -210,10 +174,18 @@ class OrderCreationCommand(BaseModel):
             "reservation_id": attempt.reservation.reservation_id,
             "execution_model_id": execution_configuration.execution_model_id,
             "liquidity_model_id": liquidity_configuration.liquidity_model_id,
+            "schedule_id": view.schedule.schedule_id,
+            "scheduler_position": view.scheduler_position,
+            "created_at": view.causal_at,
         }
         return cls.model_validate(
             {"command_id": calculate_order_creation_command_id(content), **content}
         )
+
+    @field_validator("created_at")
+    @classmethod
+    def normalize_time(cls, value: datetime) -> datetime:
+        return _utc(value)
 
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
@@ -311,6 +283,9 @@ class OrderTerminalResolution(BaseModel):
             raise ValueError("execution candidates must belong to the released market prefix")
         if self.payload.run_id != self.run_id or self.payload.order_id != self.order_id:
             raise ValueError("terminal payload attribution differs from order resolution")
+        source_id = self.payload.source_market_event_id
+        if source_id is not None and source_id not in self.candidate_market_event_ids:
+            raise ValueError("terminal source event is not an authoritative candidate")
         has_liquidity_source = (
             self.liquidity_outcome is not LiquidityResolutionOutcome.NOT_EVALUATED
         )
@@ -321,6 +296,20 @@ class OrderTerminalResolution(BaseModel):
             or self.payload.reason is not ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY
         ):
             raise ValueError("insufficient liquidity must produce a typed rejection")
+        if self.liquidity_outcome is LiquidityResolutionOutcome.FULL_FILL_AVAILABLE and (
+            self.payload.outcome is not ExecutionResolutionOutcome.FILL_READY
+        ):
+            raise ValueError("available full-fill liquidity must produce fill-ready evidence")
+        if (
+            self.payload.outcome
+            not in {ExecutionResolutionOutcome.FILL_READY, ExecutionResolutionOutcome.REJECTED}
+            and self.liquidity_outcome is not LiquidityResolutionOutcome.NOT_EVALUATED
+        ):
+            raise ValueError("non-execution terminal evidence cannot claim liquidity evaluation")
+        if self.payload.outcome is ExecutionResolutionOutcome.CANCELLED and (
+            self.cancellation_command_id is None
+        ):
+            raise ValueError("cancelled evidence requires its authoritative cancellation command")
         if self.terminal_resolution_id != calculate_order_terminal_resolution_id(self):
             raise ValueError("terminal order resolution identity does not match content")
         return self
@@ -350,8 +339,8 @@ class SimulatedOrderProjection(BaseModel):
 
     @model_validator(mode="after")
     def validate_projection(self) -> Self:
-        terminal = self.state in _TERMINAL_STATES
-        if terminal != (self.terminal_resolution is not None):
+        is_terminal = self.state in _TERMINAL_STATES
+        if is_terminal != (self.terminal_resolution is not None):
             raise ValueError("terminal projection state and resolution evidence differ")
         if (
             self.state is SimulatedOrderProjectionState.CANCEL_REQUESTED
@@ -360,11 +349,39 @@ class SimulatedOrderProjection(BaseModel):
             raise ValueError("cancel-requested projection requires its command")
         if self.cancellation is not None and self.cancellation.order_id != self.order.order_id:
             raise ValueError("cancellation command belongs to a different order")
+        if self.cancellation is not None and (
+            self.cancellation.run_id != self.order.run_id
+            or self.cancellation.account_id != self.order.account_id
+            or self.cancellation.allocation_id != self.order.allocation_id
+            or self.cancellation.agent_id != self.order.agent_id
+        ):
+            raise ValueError("cancellation attribution differs from its order")
         if self.terminal_resolution is not None and (
             self.terminal_resolution.order_id != self.order.order_id
             or self.terminal_resolution.creation_command_id != self.creation_command_id
         ):
             raise ValueError("terminal resolution belongs to a different order projection")
+        if self.terminal_resolution is not None:
+            terminal = self.terminal_resolution
+            if (
+                terminal.run_id != self.order.run_id
+                or terminal.account_id != self.order.account_id
+                or terminal.allocation_id != self.order.allocation_id
+                or terminal.agent_id != self.order.agent_id
+                or terminal.proposal_id != self.order.proposal_id
+                or terminal.risk_decision_id != self.order.risk_decision_id
+                or terminal.reservation_id != self.order.reservation_id
+                or terminal.execution_model_id != self.order.execution_model_id
+                or terminal.cancellation_command_id
+                != (
+                    self.cancellation.cancellation_command_id
+                    if self.cancellation is not None
+                    and terminal.payload.outcome is ExecutionResolutionOutcome.CANCELLED
+                    else None
+                )
+                or self.state != _projection_state_for(terminal.payload.outcome)
+            ):
+                raise ValueError("terminal attribution differs from authoritative order evidence")
         if self.projection_id != calculate_order_projection_id(self):
             raise ValueError("simulated-order projection identity does not match content")
         return self
@@ -416,6 +433,16 @@ class OrderProjectionNotFoundError(KeyError):
     """Raised when an order is outside this resolver's isolated run scope."""
 
 
+@dataclass(frozen=True, slots=True)
+class _OrderResolverState:
+    """Single publication root for exception-atomic in-memory resolver state."""
+
+    receipts: Mapping[OrderCreationCommandId, OrderCreationReceipt]
+    projections: Mapping[SimulatedOrderId, SimulatedOrderProjection]
+    source_results: Mapping[SimulatedOrderId, CausalOrchestrationResult]
+    cancellations: Mapping[SimulatedOrderId, OrderCancellationCommand]
+
+
 class OrderTerminalResolver:
     """Process-local idempotent projection owner over pure deterministic resolution."""
 
@@ -440,16 +467,21 @@ class OrderTerminalResolver:
         self._orchestrator = orchestrator
         self._failure_injector = failure_injector
         self._lock = Lock()
-        self._receipts: dict[OrderCreationCommandId, OrderCreationReceipt] = {}
-        self._projections: dict[SimulatedOrderId, SimulatedOrderProjection] = {}
-        self._source_results: dict[SimulatedOrderId, CausalOrchestrationResult] = {}
-        self._cancellations: dict[SimulatedOrderId, OrderCancellationCommand] = {}
+        self._state = _OrderResolverState({}, {}, {}, {})
         manifest = self._artifact.manifest
         if self._dataset.dataset_id != manifest.dataset_id:
             raise OrderResolutionInvariantError("resolver dataset differs from run manifest")
         if self._execution_configuration.execution_model_id != manifest.execution_model_id:
             raise OrderResolutionInvariantError(
                 "resolver execution model differs from run manifest"
+            )
+        if manifest.schema_version != "simulation-run-manifest-v2":
+            raise OrderResolutionInvariantError(
+                "Phase 6.1 resolution requires a V2 manifest with frozen liquidity"
+            )
+        if manifest.liquidity_configuration != self._liquidity_configuration:
+            raise OrderResolutionInvariantError(
+                "resolver liquidity configuration differs from run manifest"
             )
         if orchestrator.scheduler.schedule != self._schedule:
             raise OrderResolutionInvariantError(
@@ -465,6 +497,19 @@ class OrderTerminalResolver:
         if self._failure_injector is not None:
             self._failure_injector(stage)
 
+    def issue_creation_command(self, result: CausalOrchestrationResult) -> OrderCreationCommand:
+        """Issue a command only at the exact committed orchestration cursor."""
+        with self._lock:
+            authoritative = self._orchestrator.validate_result(result)
+            view = self._orchestrator.market_view()
+            self._validate_creation_view(authoritative, view)
+            return OrderCreationCommand._issue(
+                authoritative,
+                self._execution_configuration,
+                self._liquidity_configuration,
+                view,
+            )
+
     def create_order(
         self,
         command: OrderCreationCommand,
@@ -476,37 +521,57 @@ class OrderTerminalResolver:
             authoritative = self._orchestrator.validate_result(result)
             self._validate_creation_command(command, authoritative)
             self._inject("after_authoritative_result_validation")
-            prior = self._receipts.get(command.command_id)
+            prior = self._state.receipts.get(command.command_id)
             if prior is not None:
+                self._validate_receipt_state(prior)
                 return prior
+            view = self._orchestrator.market_view()
+            self._validate_creation_view(authoritative, view, command)
             built = self._build_creation(command, authoritative)
             self._inject("before_order_creation_commit")
             receipt, projection = built
-            self._receipts[command.command_id] = receipt
+            receipts = dict(self._state.receipts)
+            projections = dict(self._state.projections)
+            sources = dict(self._state.source_results)
+            receipts[command.command_id] = receipt
+            self._inject("after_creation_receipt_staged")
             if projection is not None:
-                self._projections[projection.order.order_id] = projection
-                self._source_results[projection.order.order_id] = authoritative
+                projections[projection.order.order_id] = projection
+                self._inject("after_creation_projection_staged")
+                sources[projection.order.order_id] = authoritative
+                self._inject("after_creation_source_result_staged")
+            self._publish_state(
+                _OrderResolverState(receipts, projections, sources, self._state.cancellations),
+                "order_creation",
+            )
             return receipt
 
     def projection(self, order_id: SimulatedOrderId) -> SimulatedOrderProjection:
         with self._lock:
             try:
-                return self._projections[order_id]
+                return self._state.projections[order_id]
             except KeyError as exc:
                 raise OrderProjectionNotFoundError(str(order_id)) from exc
 
-    def request_cancellation(self, order_id: SimulatedOrderId) -> OrderCancellationCommand:
+    def request_cancellation(
+        self,
+        order_id: SimulatedOrderId,
+        *,
+        expected_scheduler_position: int,
+    ) -> OrderCancellationCommand:
         """Stamp a cancellation request from the current authoritative cursor view."""
         with self._lock:
             projection = self._get_projection(order_id)
-            if projection.state in _TERMINAL_STATES:
-                raise OrderResolutionInvariantError("terminal order cannot accept cancellation")
-            prior = self._cancellations.get(order_id)
+            prior = self._state.cancellations.get(order_id)
             if prior is not None:
                 return prior
             view = self._orchestrator.market_view()
             if view.causal_at is None:
                 raise OrderResolutionInvariantError("cancellation requires a consumed causal event")
+            if expected_scheduler_position != view.scheduler_position:
+                raise OrderResolutionInvariantError(
+                    "cancellation cursor changed before authoritative publication"
+                )
             content: dict[str, object] = {
                 "schema_version": "order-cancellation-command-v1",
                 "run_id": projection.order.run_id,
@@ -525,15 +590,39 @@ class OrderTerminalResolver:
                     **content,
                 }
             )
-            updated = self._projection(
-                projection,
-                revision=projection.revision + 1,
-                state=SimulatedOrderProjectionState.CANCEL_REQUESTED,
-                cancellation=cancellation,
-            )
+            if projection.terminal_resolution is not None:
+                if projection.terminal_resolution.payload.resolved_at > cancellation.effective_at:
+                    raise OrderResolutionInvariantError(
+                        "cancellation cannot precede already-published future terminal evidence"
+                    )
+                updated = self._projection(
+                    projection,
+                    revision=projection.revision + 1,
+                    cancellation=cancellation,
+                )
+            else:
+                updated = self._projection(
+                    projection,
+                    revision=projection.revision + 1,
+                    state=SimulatedOrderProjectionState.CANCEL_REQUESTED,
+                    cancellation=cancellation,
+                )
             self._inject("before_cancellation_commit")
-            self._cancellations[order_id] = cancellation
-            self._projections[order_id] = updated
+            cancellations = dict(self._state.cancellations)
+            projections = dict(self._state.projections)
+            cancellations[order_id] = cancellation
+            self._inject("after_cancellation_command_staged")
+            projections[order_id] = updated
+            self._inject("after_cancellation_projection_staged")
+            self._publish_state(
+                _OrderResolverState(
+                    self._state.receipts,
+                    projections,
+                    self._state.source_results,
+                    cancellations,
+                ),
+                "cancellation",
+            )
             return cancellation
 
     def resolve(self, order_id: SimulatedOrderId) -> SimulatedOrderProjection:
@@ -545,7 +634,7 @@ class OrderTerminalResolver:
             view = self._orchestrator.market_view()
             if view.schedule.schedule_id != self._schedule.schedule_id:
                 raise OrderResolutionInvariantError("resolution view belongs to another schedule")
-            source_result = self._source_results[order_id]
+            source_result = self._state.source_results[order_id]
             self._orchestrator.validate_result(source_result)
             self._inject("before_terminal_resolution")
             terminal = self._resolve_terminal(projection, source_result, view)
@@ -561,7 +650,17 @@ class OrderTerminalResolver:
                         state=SimulatedOrderProjectionState.ELIGIBLE,
                     )
                     self._inject("before_eligibility_commit")
-                    self._projections[order_id] = updated
+                    projections = dict(self._state.projections)
+                    projections[order_id] = updated
+                    self._publish_state(
+                        _OrderResolverState(
+                            self._state.receipts,
+                            projections,
+                            self._state.source_results,
+                            self._state.cancellations,
+                        ),
+                        "eligibility",
+                    )
                     return updated
                 return projection
             state = _projection_state_for(terminal.payload.outcome)
@@ -571,9 +670,50 @@ class OrderTerminalResolver:
                 state=state,
                 terminal_resolution=terminal,
             )
+            self._validate_terminal_context(updated, source_result)
             self._inject("before_terminal_commit")
-            self._projections[order_id] = updated
+            projections = dict(self._state.projections)
+            projections[order_id] = updated
+            self._publish_state(
+                _OrderResolverState(
+                    self._state.receipts,
+                    projections,
+                    self._state.source_results,
+                    self._state.cancellations,
+                ),
+                "terminal",
+            )
             return updated
+
+    def validate_terminal_resolution(self, value: object) -> OrderTerminalResolution:
+        """Validate terminal evidence against this resolver's committed authority."""
+        candidate = OrderTerminalResolution.model_validate(value)
+        with self._lock:
+            projection = self._get_projection(candidate.order_id)
+            authoritative = projection.terminal_resolution
+            if authoritative is None or candidate != authoritative:
+                raise OrderResolutionInvariantError(
+                    "terminal evidence was not issued by this resolver"
+                )
+            source = self._state.source_results[candidate.order_id]
+            self._validate_terminal_context(projection, source)
+            return authoritative
+
+    def validate_projection(self, value: object) -> SimulatedOrderProjection:
+        """Validate projection evidence against the resolver-owned publication root."""
+        candidate = SimulatedOrderProjection.model_validate(value)
+        with self._lock:
+            authoritative = self._get_projection(candidate.order.order_id)
+            if candidate != authoritative:
+                raise OrderResolutionInvariantError(
+                    "projection evidence was not issued by this resolver"
+                )
+            if authoritative.terminal_resolution is not None:
+                self._validate_terminal_context(
+                    authoritative,
+                    self._state.source_results[authoritative.order.order_id],
+                )
+            return authoritative
 
     def _resolve_terminal(
         self,
@@ -673,7 +813,11 @@ class OrderTerminalResolver:
                 LiquidityResolutionOutcome.NOT_EVALUATED,
                 None,
             )
-        if order.valid_until <= session.close_at:
+        if causal_at is None:
+            raise OrderResolutionInvariantError(
+                "terminal resolution requires an authoritative causal clock"
+            )
+        if causal_at >= order.valid_until and order.valid_until <= session.close_at:
             return self._terminal(
                 projection,
                 result,
@@ -682,14 +826,16 @@ class OrderTerminalResolver:
                 candidate_ids,
                 ExecutionResolutionOutcome.EXPIRED_UNFILLED,
                 ExecutionResolutionReason.ORDER_VALIDITY_EXPIRED,
-                order.valid_until,
+                causal_at,
                 None,
                 LiquidityResolutionOutcome.NOT_EVALUATED,
                 None,
             )
-        resolved_at = causal_at or session.close_at
-        if resolved_at < session.close_at:
-            resolved_at = session.close_at
+        reason = (
+            ExecutionResolutionReason.NO_ELIGIBLE_SAME_SESSION_BAR
+            if causal_at >= session.close_at
+            else ExecutionResolutionReason.END_OF_DATA_BEFORE_EXPIRY
+        )
         return self._terminal(
             projection,
             result,
@@ -697,8 +843,8 @@ class OrderTerminalResolver:
             released_ids,
             candidate_ids,
             ExecutionResolutionOutcome.NO_ELIGIBLE_DATA,
-            ExecutionResolutionReason.NO_ELIGIBLE_SAME_SESSION_BAR,
-            resolved_at,
+            reason,
+            causal_at,
             None,
             LiquidityResolutionOutcome.NOT_EVALUATED,
             None,
@@ -719,9 +865,17 @@ class OrderTerminalResolver:
         maximum_fill_quantity: Decimal | None,
     ) -> OrderTerminalResolution:
         order = projection.order
-        extended_v3 = outcome is ExecutionResolutionOutcome.CANCELLED or (
-            outcome is ExecutionResolutionOutcome.REJECTED
-            and reason is ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY
+        if view.causal_at is None or resolved_at > view.causal_at:
+            raise OrderResolutionInvariantError(
+                "terminal evidence cannot be dated after the authoritative causal clock"
+            )
+        extended_v3 = (
+            outcome is ExecutionResolutionOutcome.CANCELLED
+            or reason is ExecutionResolutionReason.END_OF_DATA_BEFORE_EXPIRY
+            or (
+                outcome is ExecutionResolutionOutcome.REJECTED
+                and reason is ExecutionResolutionReason.INSUFFICIENT_LIQUIDITY
+            )
         )
         payload_content: dict[str, object] = {
             "schema_version": (
@@ -761,6 +915,7 @@ class OrderTerminalResolver:
             "cancellation_command_id": (
                 projection.cancellation.cancellation_command_id
                 if projection.cancellation is not None
+                and outcome is ExecutionResolutionOutcome.CANCELLED
                 else None
             ),
             "liquidity_outcome": liquidity_outcome,
@@ -791,7 +946,7 @@ class OrderTerminalResolver:
             return self._rejected_receipt(
                 command, OrderCreationRejectionReason.QUANTITY_INCREMENT_MISMATCH
             )
-        submitted_at = result.evaluated_at
+        submitted_at = command.created_at
         eligible_at = submitted_at + timedelta(
             seconds=self._execution_configuration.routing_latency_seconds
         )
@@ -914,6 +1069,9 @@ class OrderTerminalResolver:
             and command.reservation_id == attempt.reservation.reservation_id
             and command.execution_model_id == self._execution_configuration.execution_model_id
             and command.liquidity_model_id == self._liquidity_configuration.liquidity_model_id
+            and command.schedule_id == self._schedule.schedule_id == result.schedule_id
+            and command.scheduler_position == result.scheduler_position_after
+            and command.created_at == result.evaluated_at
         )
         if not expected:
             raise OrderResolutionInvariantError(
@@ -927,6 +1085,123 @@ class OrderTerminalResolver:
             raise OrderResolutionInvariantError(
                 "order creation requires SIMULATION with ORDER_ENABLED authority"
             )
+
+    def _validate_creation_view(
+        self,
+        result: CausalOrchestrationResult,
+        view: OrchestrationMarketView,
+        command: OrderCreationCommand | None = None,
+    ) -> None:
+        if view.schedule.schedule_id != result.schedule_id:
+            raise OrderResolutionInvariantError("order creation belongs to another schedule")
+        if (
+            view.scheduler_position != result.scheduler_position_after
+            or view.causal_at != result.evaluated_at
+        ):
+            raise OrderResolutionInvariantError(
+                "order creation cursor is stale or execution evidence is already available"
+            )
+        if command is not None and (
+            command.schedule_id != view.schedule.schedule_id
+            or command.scheduler_position != view.scheduler_position
+            or command.created_at != view.causal_at
+        ):
+            raise OrderResolutionInvariantError(
+                "order creation command differs from the authoritative causal cursor"
+            )
+        assert isinstance(result.strategy_decision, TradeProposalDecision)
+        assert result.risk_attempt is not None
+        assert result.risk_attempt.reservation is not None
+        expires_at = min(
+            result.strategy_decision.proposal.valid_until,
+            result.risk_attempt.reservation.expires_at,
+        )
+        if view.causal_at is None or view.causal_at >= expires_at:
+            raise OrderResolutionInvariantError("proposal or reservation is expired")
+
+    def _validate_receipt_state(self, receipt: OrderCreationReceipt) -> None:
+        if receipt.outcome is OrderCreationOutcome.REJECTED:
+            return
+        assert receipt.order_id is not None
+        assert receipt.projection_id is not None
+        projection = self._state.projections.get(receipt.order_id)
+        if (
+            projection is None
+            or projection.projection_id != receipt.projection_id
+            or receipt.order_id not in self._state.source_results
+        ):
+            raise OrderResolutionInvariantError(
+                "creation receipt has no complete authoritative projection publication"
+            )
+
+    def _validate_terminal_context(
+        self,
+        projection: SimulatedOrderProjection,
+        result: CausalOrchestrationResult,
+    ) -> None:
+        terminal = projection.terminal_resolution
+        if terminal is None:
+            raise OrderResolutionInvariantError("terminal validation requires terminal evidence")
+        order = projection.order
+        cancellation = self._state.cancellations.get(order.order_id)
+        manifest = self._artifact.manifest
+        expected = (
+            terminal.creation_command_id == projection.creation_command_id
+            and terminal.orchestration_result_id == result.orchestration_result_id
+            and terminal.artifact_id == self._artifact.artifact_id == result.artifact_id
+            and terminal.run_id == manifest.run_id == order.run_id == result.run_id
+            and terminal.account_id == manifest.account_id == order.account_id == result.account_id
+            and terminal.allocation_id
+            == manifest.allocation_id
+            == order.allocation_id
+            == result.allocation_id
+            and terminal.agent_id == manifest.agent_id == order.agent_id == result.agent_id
+            and terminal.proposal_id == order.proposal_id
+            and terminal.risk_decision_id == order.risk_decision_id
+            and terminal.reservation_id == order.reservation_id
+            and terminal.execution_model_id
+            == manifest.execution_model_id
+            == order.execution_model_id
+            and terminal.liquidity_model_id == self._liquidity_configuration.liquidity_model_id
+            and terminal.schedule_id == self._schedule.schedule_id == result.schedule_id
+            and terminal.cancellation_command_id
+            == (
+                cancellation.cancellation_command_id
+                if cancellation is not None
+                and terminal.payload.outcome is ExecutionResolutionOutcome.CANCELLED
+                else None
+            )
+        )
+        if not expected:
+            raise OrderResolutionInvariantError(
+                "terminal evidence differs from authoritative order/run evidence"
+            )
+        if terminal.scheduler_position > len(self._schedule.events):
+            raise OrderResolutionInvariantError("terminal scheduler position is outside the run")
+        prefix_event_ids = {
+            str(event.payload_id) for event in self._schedule.events[: terminal.scheduler_position]
+        }
+        artifact_event_ids = {str(item.market_event_id) for item in self._artifact.market_events}
+        authoritative_released = tuple(
+            item.market_event_id
+            for item in self._artifact.market_events
+            if str(item.market_event_id) in prefix_event_ids & artifact_event_ids
+        )
+        if set(terminal.released_market_event_ids) != set(authoritative_released):
+            raise OrderResolutionInvariantError(
+                "terminal released prefix differs from authoritative schedule"
+            )
+
+    def _publish_state(self, next_state: _OrderResolverState, operation: str) -> None:
+        """Atomically replace every resolver registry, rolling back injected failures."""
+        previous = self._state
+        self._inject(f"before_{operation}_state_publication")
+        self._state = next_state
+        try:
+            self._inject(f"after_{operation}_state_publication")
+        except BaseException:
+            self._state = previous
+            raise
 
     def _proposal_session(self, result: CausalOrchestrationResult) -> TradingSession:
         bars = result.market_data.bars
@@ -1006,7 +1281,7 @@ class OrderTerminalResolver:
 
     def _get_projection(self, order_id: SimulatedOrderId) -> SimulatedOrderProjection:
         try:
-            return self._projections[order_id]
+            return self._state.projections[order_id]
         except KeyError as exc:
             raise OrderProjectionNotFoundError(str(order_id)) from exc
 

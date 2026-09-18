@@ -79,6 +79,7 @@ from ai_trading_scanner.simulation import (
     ResultFinalizationPayload,
     SchedulerExhaustedError,
     SchedulerLeaseError,
+    SimulationLiquidityConfiguration,
     SimulationResultStatus,
     SimulationRunManifest,
     calculate_marker_payload_id,
@@ -197,12 +198,17 @@ def _manifest(
     suffix: str,
     submission_mode: SubmissionMode = SubmissionMode.ORDER_ENABLED,
     mandate_id: ManagementMandateId | None = None,
+    liquidity_configuration: SimulationLiquidityConfiguration | None = None,
 ) -> SimulationRunManifest:
     execution = execution_configuration()
     costs = cost_configuration()
     dimensions = execution_dimensions(submission_mode=submission_mode)
     content: dict[str, object] = {
-        "schema_version": "simulation-run-manifest-v1",
+        "schema_version": (
+            "simulation-run-manifest-v2"
+            if liquidity_configuration is not None
+            else "simulation-run-manifest-v1"
+        ),
         "dataset_id": dataset.dataset_id,
         "account_id": AccountId.parse(f"account:orchestration-{suffix}"),
         "allocation_id": AllocationId.parse(f"allocation:orchestration-{suffix}"),
@@ -217,6 +223,7 @@ def _manifest(
         "configuration_version_id": AUTHORITY,
         "execution_model_id": execution.execution_model_id,
         "cost_model_id": costs.cost_model_id,
+        "liquidity_configuration": liquidity_configuration,
         "starting_capital": "1000",
         "reporting_currency": "USD",
         "execution_dimensions": dimensions,
@@ -367,6 +374,7 @@ def _setup(
     bars: Sequence[HistoricalBar] | None = None,
     submission_mode: SubmissionMode = SubmissionMode.ORDER_ENABLED,
     risk: RiskConfiguration | None = None,
+    liquidity_configuration: SimulationLiquidityConfiguration | None = None,
 ) -> tuple[
     CausalOrchestrator,
     ReplayArtifactBundle,
@@ -385,6 +393,7 @@ def _setup(
         suffix=suffix,
         submission_mode=submission_mode,
         mandate_id=mandate,
+        liquidity_configuration=liquidity_configuration,
     )
     artifact = _artifact(dataset, manifest)
     coordinator = _coordinator(manifest)

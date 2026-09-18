@@ -111,8 +111,9 @@ def _custom_environment(
     configuration = MultiFactorConfiguration.model_validate(configuration_content)
     risk = _risk()
     costs = cost_configuration()
+    liquidity = _liquidity(participation)
     manifest_content: dict[str, object] = {
-        "schema_version": "simulation-run-manifest-v1",
+        "schema_version": "simulation-run-manifest-v2",
         "dataset_id": dataset.dataset_id,
         "account_id": AccountId.parse(f"account:order-resolution-{suffix}"),
         "allocation_id": AllocationId.parse(f"allocation:order-resolution-{suffix}"),
@@ -127,6 +128,7 @@ def _custom_environment(
         "configuration_version_id": AUTHORITY,
         "execution_model_id": execution.execution_model_id,
         "cost_model_id": costs.cost_model_id,
+        "liquidity_configuration": liquidity,
         "starting_capital": "1000",
         "reporting_currency": "USD",
         "execution_dimensions": execution_dimensions(),
@@ -148,7 +150,6 @@ def _custom_environment(
     _advance_to_proposal_boundary(orchestrator)
     result = orchestrator.advance()
     assert result is not None
-    liquidity = _liquidity(participation)
     resolver = OrderTerminalResolver(
         artifact=artifact,
         dataset=dataset,
@@ -156,7 +157,7 @@ def _custom_environment(
         execution_configuration=execution,
         liquidity_configuration=liquidity,
     )
-    command = OrderCreationCommand.create(result, execution, liquidity)
+    command = resolver.issue_creation_command(result)
     receipt = resolver.create_order(command, result)
     return orchestrator, result, resolver, receipt
 
@@ -172,18 +173,23 @@ def _environment(
     OrderTerminalResolver,
     OrderCreationCommand,
 ]:
+    liquidity = _liquidity(participation)
     orchestrator, artifact, dataset, _ = _setup(
         f"order-resolution-{suffix}",
         configuration=_fast_proposal_configuration(),
         bars=_fast_bars(),
+        liquidity_configuration=liquidity,
     )
     _advance_to_proposal_boundary(orchestrator)
     result = orchestrator.advance()
     assert result is not None
-    liquidity = _liquidity(participation)
+
+    failure_triggered = False
 
     def inject(stage: str) -> None:
-        if stage == failure_stage:
+        nonlocal failure_triggered
+        if stage == failure_stage and not failure_triggered:
+            failure_triggered = True
             raise RuntimeError(f"injected:{stage}")
 
     resolver = OrderTerminalResolver(
@@ -194,7 +200,7 @@ def _environment(
         liquidity_configuration=liquidity,
         failure_injector=inject if failure_stage is not None else None,
     )
-    command = OrderCreationCommand.create(result, execution_configuration(), liquidity)
+    command = resolver.issue_creation_command(result)
     return orchestrator, result, resolver, command
 
 
@@ -331,9 +337,10 @@ def test_missing_eligible_bars_expire_without_synthesis() -> None:
     projection = _advance_to_terminal(orchestrator, resolver, receipt.order_id)
     terminal = projection.terminal_resolution
     assert terminal is not None
-    assert projection.state is SimulatedOrderProjectionState.EXPIRED_UNFILLED
-    assert terminal.payload.outcome is ExecutionResolutionOutcome.EXPIRED_UNFILLED
-    assert terminal.payload.reason is ExecutionResolutionReason.ORDER_VALIDITY_EXPIRED
+    assert projection.state is SimulatedOrderProjectionState.NO_ELIGIBLE_DATA
+    assert terminal.payload.outcome is ExecutionResolutionOutcome.NO_ELIGIBLE_DATA
+    assert terminal.payload.reason is ExecutionResolutionReason.END_OF_DATA_BEFORE_EXPIRY
+    assert terminal.payload.resolved_at == orchestrator.market_view().causal_at
     assert terminal.candidate_market_event_ids == ()
 
 
@@ -454,10 +461,15 @@ def test_insufficient_reported_liquidity_rejects_full_fill_without_partial_fill(
 
 
 def test_immediate_cancellation_wins_before_eligibility_and_is_idempotent() -> None:
-    _, _, resolver, receipt = _created("cancel-before-eligible")
+    orchestrator, _, resolver, receipt = _created("cancel-before-eligible")
     assert receipt.order_id is not None
-    first_command = resolver.request_cancellation(receipt.order_id)
-    second_command = resolver.request_cancellation(receipt.order_id)
+    position = orchestrator.scheduler.position
+    first_command = resolver.request_cancellation(
+        receipt.order_id, expected_scheduler_position=position
+    )
+    second_command = resolver.request_cancellation(
+        receipt.order_id, expected_scheduler_position=position
+    )
     assert first_command is second_command
     projection = resolver.resolve(receipt.order_id)
     terminal = projection.terminal_resolution
@@ -472,7 +484,10 @@ def test_cancellation_after_execution_interval_open_does_not_erase_fill() -> Non
     assert receipt.order_id is not None
     while len(orchestrator.released_market_events) < 6:
         orchestrator.advance()
-    resolver.request_cancellation(receipt.order_id)
+    resolver.request_cancellation(
+        receipt.order_id,
+        expected_scheduler_position=orchestrator.scheduler.position,
+    )
     projection = resolver.resolve(receipt.order_id)
     terminal = projection.terminal_resolution
     assert terminal is not None
@@ -527,6 +542,11 @@ def test_forged_command_identity_fails_model_validation() -> None:
         "before_authoritative_result_validation",
         "after_authoritative_result_validation",
         "before_order_creation_commit",
+        "after_creation_receipt_staged",
+        "after_creation_projection_staged",
+        "after_creation_source_result_staged",
+        "before_order_creation_state_publication",
+        "after_order_creation_state_publication",
     ],
 )
 def test_creation_exception_leaves_order_registry_unchanged(stage: str) -> None:
@@ -547,11 +567,23 @@ def test_creation_exception_leaves_order_registry_unchanged(stage: str) -> None:
         orchestrator.released_market_events,
         orchestrator.scheduler.published_result_ids,
     ) == before
+    retry = resolver.create_order(command, result)
+    assert retry.order_id is not None
+    assert resolver.projection(retry.order_id).projection_id == retry.projection_id
 
 
-def test_terminal_exception_leaves_existing_projection_unchanged() -> None:
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "before_terminal_resolution",
+        "before_terminal_commit",
+        "before_terminal_state_publication",
+        "after_terminal_state_publication",
+    ],
+)
+def test_terminal_exception_leaves_existing_projection_unchanged(stage: str) -> None:
     orchestrator, result, resolver, command = _environment(
-        "terminal-failure", failure_stage="before_terminal_commit"
+        f"terminal-failure-{stage}", failure_stage=stage
     )
     receipt = resolver.create_order(command, result)
     assert receipt.order_id is not None
@@ -562,13 +594,39 @@ def test_terminal_exception_leaves_existing_projection_unchanged() -> None:
         orchestrator.scheduler.position,
         orchestrator.scheduler.published_result_ids,
     )
-    with pytest.raises(RuntimeError, match="before_terminal_commit"):
+    with pytest.raises(RuntimeError, match=stage):
         resolver.resolve(receipt.order_id)
     assert resolver.projection(receipt.order_id) == before
     assert (
         orchestrator.scheduler.position,
         orchestrator.scheduler.published_result_ids,
     ) == orchestration_before
+    terminal = resolver.resolve(receipt.order_id)
+    assert terminal.terminal_resolution is not None
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "before_cancellation_commit",
+        "after_cancellation_command_staged",
+        "after_cancellation_projection_staged",
+        "before_cancellation_state_publication",
+        "after_cancellation_state_publication",
+    ],
+)
+def test_cancellation_exception_is_atomic_and_retryable(stage: str) -> None:
+    orchestrator, _, resolver, receipt = _created(f"cancel-failure-{stage}", failure_stage=stage)
+    assert receipt.order_id is not None
+    before = resolver.projection(receipt.order_id)
+    position = orchestrator.scheduler.position
+    with pytest.raises(RuntimeError, match=stage):
+        resolver.request_cancellation(receipt.order_id, expected_scheduler_position=position)
+    assert resolver.projection(receipt.order_id) == before
+    cancellation = resolver.request_cancellation(
+        receipt.order_id, expected_scheduler_position=position
+    )
+    assert resolver.projection(receipt.order_id).cancellation == cancellation
 
 
 def test_concurrent_repeated_resolution_publishes_one_terminal_projection() -> None:
