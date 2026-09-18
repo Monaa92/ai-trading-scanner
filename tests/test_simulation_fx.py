@@ -185,9 +185,42 @@ def test_observation_accepts_checksum_without_record_id() -> None:
     assert observation.source_checksum == "sha256:" + "a" * 64
 
 
+def test_observation_accepts_record_id_without_checksum() -> None:
+    observation = _observation(source_record_id="fx:test-only:1", source_checksum=None)
+    assert observation.source_record_id == "fx:test-only:1"
+    assert observation.source_checksum is None
+
+
+def test_observation_accepts_record_id_with_checksum() -> None:
+    observation = _observation(
+        source_record_id="fx:test-only:1", source_checksum="sha256:" + "a" * 64
+    )
+    assert observation.source_record_id == "fx:test-only:1"
+    assert observation.source_checksum == "sha256:" + "a" * 64
+
+
 def test_observation_rejects_whitespace_only_record_id_with_no_checksum() -> None:
-    with pytest.raises(ValidationError, match="source_record_id or source_checksum"):
+    with pytest.raises(ValidationError, match="source_record_id must be nonblank"):
         _observation(source_record_id="   ", source_checksum=None)
+
+
+@pytest.mark.parametrize("blank_record_id", ["", "   ", "\t\n "])
+def test_observation_rejects_blank_record_id_even_with_valid_checksum(
+    blank_record_id: str,
+) -> None:
+    """The bug this fix closes: a blank source_record_id must be rejected outright,
+    not silently accepted because a valid source_checksum is also present."""
+    with pytest.raises(ValidationError, match="source_record_id must be nonblank"):
+        _observation(source_record_id=blank_record_id, source_checksum="sha256:" + "a" * 64)
+
+
+def test_observation_identity_unchanged_for_already_valid_record_id() -> None:
+    """This fix only rejects previously-invalid (blank) input; it must not change
+    the computed identity for input that was already valid."""
+    content = _complete_observation_content()
+    expected_id = calculate_fx_observation_id(content)
+    observation = _observation()
+    assert observation.fx_observation_id == expected_id
 
 
 def test_observation_rejects_empty_checksum() -> None:

@@ -134,8 +134,11 @@ class FxObservationReference(BaseModel):
     `source_checksum` must match `sha256:` followed by 64 lowercase hex
     characters — this project's own content-identity format — and is
     rejected as malformed otherwise, whether or not `source_record_id` is
-    also present. At least one of `source_record_id`/`source_checksum` must
-    still be present and meaningful.
+    also present. `source_record_id` remains optional, but when supplied it
+    must also be nonblank — an empty or whitespace-only value is rejected
+    even when a valid `source_checksum` is also present. At least one of
+    `source_record_id`/`source_checksum` must still be present and
+    meaningful.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -191,6 +194,15 @@ class FxObservationReference(BaseModel):
             raise ValueError(
                 "source_checksum must match 'sha256:' followed by 64 lowercase hex characters"
             )
+        return value
+
+    @field_validator("source_record_id")
+    @classmethod
+    def validate_record_id_nonblank(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not _is_meaningful_text(value):
+            raise ValueError("source_record_id must be nonblank when supplied")
         return value
 
     @model_validator(mode="after")
