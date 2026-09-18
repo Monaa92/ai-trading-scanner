@@ -1,6 +1,6 @@
 # Transaction costs
 
-Status: **PARTIAL — VERSIONED PHASE 6 CALCULATION CONTRACT; numeric broker-style schedules REQUIRED BUT UNSET**. No evidential IBKR/Kraken fee profile or complete simulation is executable yet.
+Status: **PARTIAL — VERSIONED PHASE 6 CALCULATION CONTRACT; numeric broker-style schedules REQUIRED BUT UNSET**. No evidential IBKR/Kraken fee profile or complete simulation is executable yet. [[00 - Project/Decisions/ADR-036 - Phase 6.2 cost and FX foundation]] adds a fail-closed `CostProfileRegistration` sourcing gate (`CostProfileStatus.SOURCED_AND_VALIDATED` required, with source/reference/effective-date/validator attribution) so no run can silently use an unsourced profile; it does not itself supply the real numbers.
 
 Strategies evaluate expected net opportunity before proposing a trade:
 

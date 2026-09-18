@@ -59,3 +59,9 @@ ADR-033 specifies the content-identified discrete-event ordering, next-eligible-
 - [[00 - Project/Decisions/ADR-035 - Autonomous survival economic entity]]
 
 ADR-034 defines the target atomic order/fill/accounting, causal cost/FX and durable recovery architecture. ADR-035 defines Agent 5 as one conserved economic entity with a frozen adaptation envelope, opportunity-aware active-survival objective and irreversible economic death. Both are design decisions only. They do not implement replay/execution, Agent 5, AI, broker connectivity, PAPER or LIVE authority and do not add Agent 5 to Experiment 1.
+
+## Phase 6.2 cost and FX foundation — 2026-09-18
+
+- [[00 - Project/Decisions/ADR-036 - Phase 6.2 cost and FX foundation]]
+
+ADR-036 separates FX conversion cost from the accepted `TransactionCostConfiguration`, adds a fail-closed cost-profile sourcing/registration gate, and defines causal `FxObservationReference` evidence plus a versioned `FxConversionPolicyConfiguration` with no default quote convention, staleness threshold or rate. It is bounded to immutable evidence/profile contracts and their own validation; the causal FX resolver, balanced-leg calculation, manifest V3 binding and any posting remain unimplemented and require separate authorization.

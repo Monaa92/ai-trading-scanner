@@ -217,3 +217,15 @@ class RealizedTradeResultId(Identifier):
 
 class SimulationResultId(Identifier):
     """Content-derived identity of an immutable simulation result."""
+
+
+class CostProfileRegistrationId(Identifier):
+    """Content-derived identity of one sourcing/audit record over a transaction-cost model."""
+
+
+class FxObservationId(Identifier):
+    """Content-derived identity of one immutable causal FX observation."""
+
+
+class FxConversionPolicyId(Identifier):
+    """Content-derived identity of a versioned FX conversion/valuation policy."""
