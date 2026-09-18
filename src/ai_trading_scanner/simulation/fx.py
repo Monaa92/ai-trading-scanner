@@ -11,7 +11,7 @@ is caller-supplied evidence or an explicit, versioned policy choice.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
@@ -32,14 +32,38 @@ def _identity_content(
     return {key: item for key, item in value.items() if key != identity_field}
 
 
+def _is_meaningful_text(value: str | None) -> bool:
+    """True only for a non-`None` string with at least one non-whitespace character."""
+    return value is not None and value.strip() != ""
+
+
 def _normalized_decimal_content(
     value: BaseModel | dict[str, object], identity_field: str, fields: tuple[str, ...]
 ) -> dict[str, object]:
+    """Return identity content with the named fields coerced to finite Decimal.
+
+    This is the public identity boundary for Decimal-typed fields: it must
+    reject binary floats, non-finite values and malformed input exactly like
+    the model's own field validators, even when called directly on a raw
+    dict rather than through a validated model instance.
+    """
     content = _identity_content(value, identity_field)
     for field in fields:
         item = content.get(field)
-        if item is not None and not isinstance(item, Decimal | float):
-            content[field] = Decimal(item)  # type: ignore[arg-type]
+        if item is None:
+            continue
+        if isinstance(item, float):
+            raise ValueError(f"{field!r} must use Decimal or a decimal string, not float")
+        if isinstance(item, Decimal):
+            decimal_item = item
+        else:
+            try:
+                decimal_item = Decimal(item)  # type: ignore[arg-type]
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                raise ValueError(f"{field!r} must be a valid Decimal value") from exc
+        if not decimal_item.is_finite():
+            raise ValueError(f"{field!r} must be a finite Decimal value")
+        content[field] = decimal_item
     return content
 
 
@@ -68,6 +92,19 @@ class FxQuoteConvention(StrEnum):
     DECLARED_REFERENCE = "DECLARED_REFERENCE"
 
 
+class FxObservationQualityStatus(StrEnum):
+    """Explicit quality classification for one FX observation; no default.
+
+    This names the states an observation's quality review can be in. It does
+    not itself assess or assign a production quality outcome; every
+    observation must state which status applies to it.
+    """
+
+    UNVALIDATED = "UNVALIDATED"
+    VALIDATED = "VALIDATED"
+    SUSPECT = "SUSPECT"
+
+
 class FxObservationReference(BaseModel):
     """Immutable causal FX evidence.
 
@@ -75,7 +112,12 @@ class FxObservationReference(BaseModel):
     the observation cannot be used before `available_at`, exactly like a
     market bar. The `rate` is supplied evidence from an external provider; it
     is never computed, defaulted or invented by this contract or by any
-    engine code that consumes it.
+    engine code that consumes it. Provenance and quality fields make the
+    evidence auditable: which source dataset and version it came from, the
+    exact record or checksum that identifies it, how it was ingested, and its
+    explicit quality classification. All of them are bound into
+    `fx_observation_id`, so changing any one changes the observation's
+    identity.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -90,7 +132,12 @@ class FxObservationReference(BaseModel):
     rate: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
     observed_at: datetime
     available_at: datetime
+    source_dataset_id: str = Field(min_length=1)
+    source_dataset_version: str = Field(min_length=1)
     source_record_id: str | None = None
+    source_checksum: str | None = None
+    ingestion_provenance: str = Field(min_length=1)
+    quality_status: FxObservationQualityStatus
 
     @field_validator("rate", mode="before")
     @classmethod
@@ -108,6 +155,12 @@ class FxObservationReference(BaseModel):
             raise ValueError("an FX observation requires two distinct currencies")
         if self.available_at < self.observed_at:
             raise ValueError("an FX observation cannot be available before it was observed")
+        if not (
+            _is_meaningful_text(self.source_record_id) or _is_meaningful_text(self.source_checksum)
+        ):
+            raise ValueError(
+                "an FX observation requires a nonblank source_record_id or source_checksum"
+            )
         if self.fx_observation_id != calculate_fx_observation_id(self):
             raise ValueError("FX observation identity does not match content")
         return self

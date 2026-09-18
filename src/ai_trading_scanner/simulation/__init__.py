@@ -23,6 +23,7 @@ from ai_trading_scanner.simulation.costs import (
 )
 from ai_trading_scanner.simulation.fx import (
     FxConversionPolicyConfiguration,
+    FxObservationQualityStatus,
     FxObservationReference,
     FxQuoteConvention,
     calculate_fx_conversion_policy_id,
@@ -139,6 +140,7 @@ __all__ = [
     "FillCostBreakdown",
     "FillPricePolicy",
     "FxConversionPolicyConfiguration",
+    "FxObservationQualityStatus",
     "FxObservationReference",
     "FxQuoteConvention",
     "GapPolicy",

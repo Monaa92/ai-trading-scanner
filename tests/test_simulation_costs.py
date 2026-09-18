@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 from simulation_helpers import cost_configuration
 
+from ai_trading_scanner.domain import CostProfileRegistrationId
 from ai_trading_scanner.simulation import (
     CostProfileNotSourcedError,
     CostProfileRegistration,
@@ -53,7 +54,7 @@ def test_unsourced_registration_forbids_sourcing_evidence() -> None:
 
 
 def test_sourced_registration_requires_complete_sourcing_evidence() -> None:
-    with pytest.raises(ValidationError, match="requires source"):
+    with pytest.raises(ValidationError, match="requires nonblank source"):
         _registration(status=CostProfileStatus.SOURCED_AND_VALIDATED)
 
 
@@ -66,6 +67,30 @@ def test_sourced_registration_accepts_complete_sourcing_evidence() -> None:
         validated_by="test-fixture",
     )
     assert registered.status is CostProfileStatus.SOURCED_AND_VALIDATED
+
+
+def _complete_sourcing_evidence(**changes: object) -> dict[str, object]:
+    evidence: dict[str, object] = {
+        "status": CostProfileStatus.SOURCED_AND_VALIDATED,
+        "source": "TEST_ONLY: synthetic fixture, not a real broker fee schedule",
+        "source_reference": "TEST_ONLY: fixture-ref-1",
+        "effective_date": date(2026, 1, 1),
+        "validated_by": "test-fixture",
+    }
+    evidence.update(changes)
+    return evidence
+
+
+@pytest.mark.parametrize("blank_field", ["source", "source_reference", "validated_by"])
+def test_sourced_registration_rejects_empty_string_evidence(blank_field: str) -> None:
+    with pytest.raises(ValidationError, match="requires nonblank"):
+        _registration(**_complete_sourcing_evidence(**{blank_field: ""}))
+
+
+@pytest.mark.parametrize("blank_field", ["source", "source_reference", "validated_by"])
+def test_sourced_registration_rejects_whitespace_only_evidence(blank_field: str) -> None:
+    with pytest.raises(ValidationError, match="requires nonblank"):
+        _registration(**_complete_sourcing_evidence(**{blank_field: "   \t  "}))
 
 
 def test_registration_identity_is_stable_for_identical_content() -> None:
@@ -103,9 +128,7 @@ def test_registration_rejects_forged_identity() -> None:
         "rounding_policy": CostRoundingPolicy.ROUND_HALF_EVEN_V1,
     }
     with pytest.raises(ValidationError, match="identity does not match content"):
-        CostProfileRegistration.model_validate(
-            {"registration_id": "sha256:" + "0" * 64, **content}
-        )
+        CostProfileRegistration.model_validate({"registration_id": "sha256:" + "0" * 64, **content})
 
 
 def test_registration_rejects_unknown_fields() -> None:
@@ -122,6 +145,27 @@ def test_registration_rejects_unknown_fields() -> None:
         CostProfileRegistration.model_validate(
             {"registration_id": calculate_cost_profile_registration_id(content), **content}
         )
+
+
+def test_require_sourced_cost_profile_rejects_bypassed_blank_evidence() -> None:
+    """Even an instance that bypasses model validation (``model_construct``) must still
+    be rejected by the gate's own defensive re-check, not just by the model's constructor."""
+    configuration = cost_configuration()
+    bypassed = CostProfileRegistration.model_construct(
+        registration_id=CostProfileRegistrationId.parse("registration:test-only-bypassed"),
+        schema_version="cost-profile-registration-v1",
+        cost_model_id=configuration.cost_model_id,
+        profile_name="TEST_ONLY_BYPASSED_PROFILE",
+        status=CostProfileStatus.SOURCED_AND_VALIDATED,
+        rounding_policy=CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+        source="   ",
+        source_reference="TEST_ONLY: fixture-ref-1",
+        effective_date=date(2026, 1, 1),
+        validated_by="test-fixture",
+        notes=None,
+    )
+    with pytest.raises(CostProfileNotSourcedError, match="not sourced and validated"):
+        require_sourced_cost_profile(bypassed, configuration)
 
 
 def test_require_sourced_cost_profile_blocks_unsourced_profile() -> None:

@@ -35,6 +35,11 @@ def _identity_content(
     return content
 
 
+def _is_meaningful_text(value: str | None) -> bool:
+    """True only for a non-`None` string with at least one non-whitespace character."""
+    return value is not None and value.strip() != ""
+
+
 class CostRoundingPolicy(StrEnum):
     """Versioned Decimal rounding rule for cost and FX monetary calculations.
 
@@ -84,15 +89,16 @@ class CostProfileRegistration(BaseModel):
     def validate_registration(self) -> Self:
         sourced = self.status is CostProfileStatus.SOURCED_AND_VALIDATED
         has_sourcing_evidence = (
-            self.source is not None
-            and self.source_reference is not None
+            _is_meaningful_text(self.source)
+            and _is_meaningful_text(self.source_reference)
             and self.effective_date is not None
-            and self.validated_by is not None
+            and _is_meaningful_text(self.validated_by)
         )
         if sourced != has_sourcing_evidence:
             raise ValueError(
-                "a sourced-and-validated cost profile requires source, source reference, "
-                "effective date and validator attribution; an unsourced profile must omit them"
+                "a sourced-and-validated cost profile requires nonblank source, source "
+                "reference, effective date and validator attribution; an unsourced profile "
+                "must omit them or leave them blank"
             )
         if self.registration_id != calculate_cost_profile_registration_id(self):
             raise ValueError("cost profile registration identity does not match content")
@@ -117,16 +123,25 @@ def require_sourced_cost_profile(
 ) -> TransactionCostConfiguration:
     """Fail closed unless the exact configuration is registered as sourced and validated.
 
-    Returns the configuration unchanged so callers can chain this as a gate;
-    it never fabricates, adjusts or defaults any cost value.
+    `CostProfileRegistration.validate_registration` already makes a
+    `SOURCED_AND_VALIDATED` instance impossible to construct with missing or
+    blank evidence, so this re-checks that invariant defensively rather than
+    trusting the status flag alone. Returns the configuration unchanged so
+    callers can chain this as a gate; it never fabricates, adjusts or
+    defaults any cost value.
     """
     if registration.cost_model_id != configuration.cost_model_id:
         raise CostProfileNotSourcedError(
             "cost profile registration does not reference the supplied configuration"
         )
-    if registration.status is not CostProfileStatus.SOURCED_AND_VALIDATED:
+    if registration.status is not CostProfileStatus.SOURCED_AND_VALIDATED or not (
+        _is_meaningful_text(registration.source)
+        and _is_meaningful_text(registration.source_reference)
+        and registration.effective_date is not None
+        and _is_meaningful_text(registration.validated_by)
+    ):
         raise CostProfileNotSourcedError(
-            f"cost profile {registration.profile_name!r} is not sourced and validated; "
-            "no run may use it"
+            f"cost profile {registration.profile_name!r} is not sourced and validated with "
+            "complete, nonblank evidence; no run may use it"
         )
     return configuration

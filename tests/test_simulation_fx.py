@@ -9,6 +9,7 @@ manifest binding — several tests below assert that boundary explicitly.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +17,7 @@ from pydantic import ValidationError
 from ai_trading_scanner.simulation import (
     CostRoundingPolicy,
     FxConversionPolicyConfiguration,
+    FxObservationQualityStatus,
     FxObservationReference,
     FxQuoteConvention,
     calculate_fx_conversion_policy_id,
@@ -38,7 +40,12 @@ def _observation(**changes: object) -> FxObservationReference:
         "rate": "1.08",
         "observed_at": _OBSERVED_AT,
         "available_at": _AVAILABLE_AT,
+        "source_dataset_id": "TEST_ONLY_SYNTHETIC_FX_DATASET",
+        "source_dataset_version": "test-only-v1",
         "source_record_id": "fx:test-only:1",
+        "source_checksum": None,
+        "ingestion_provenance": "TEST_ONLY: manual synthetic fixture, not a real ingestion run",
+        "quality_status": FxObservationQualityStatus.UNVALIDATED,
     }
     content.update(changes)
     return FxObservationReference.model_validate(
@@ -82,8 +89,14 @@ def test_observation_requires_two_distinct_currencies() -> None:
 
 
 def test_observation_rejects_float_rate() -> None:
+    """The model's own field validator rejects a float rate independently of the
+    free-standing `calculate_fx_observation_id` helper (see Finding-3 tests below)."""
+    content = _complete_observation_content()
+    content["rate"] = 1.08
     with pytest.raises(ValidationError, match="Decimal"):
-        _observation(rate=1.08)
+        FxObservationReference.model_validate(
+            {"fx_observation_id": "sha256:" + "0" * 64, **content}
+        )
 
 
 def test_observation_rejects_non_positive_rate() -> None:
@@ -93,17 +106,29 @@ def test_observation_rejects_non_positive_rate() -> None:
         _observation(rate="-1.08")
 
 
-def test_observation_has_no_default_rate() -> None:
-    content: dict[str, object] = {
+def _complete_observation_content() -> dict[str, object]:
+    return {
         "schema_version": "fx-observation-reference-v1",
         "base_currency": "EUR",
         "quote_currency": "USD",
         "provider": "TEST_ONLY_SYNTHETIC_PROVIDER",
         "methodology_version": "test-only-v1",
         "quote_convention": FxQuoteConvention.DECLARED_REFERENCE,
+        "rate": "1.08",
         "observed_at": _OBSERVED_AT,
         "available_at": _AVAILABLE_AT,
+        "source_dataset_id": "TEST_ONLY_SYNTHETIC_FX_DATASET",
+        "source_dataset_version": "test-only-v1",
+        "source_record_id": "fx:test-only:1",
+        "source_checksum": None,
+        "ingestion_provenance": "TEST_ONLY: manual synthetic fixture, not a real ingestion run",
+        "quality_status": FxObservationQualityStatus.UNVALIDATED,
     }
+
+
+def test_observation_has_no_default_rate() -> None:
+    content = _complete_observation_content()
+    del content["rate"]
     with pytest.raises(ValidationError, match="rate"):
         FxObservationReference.model_validate(
             {"fx_observation_id": "sha256:" + "0" * 64, **content}
@@ -118,18 +143,7 @@ def test_observation_rejects_unknown_fields() -> None:
 def test_observation_rejects_forged_identity() -> None:
     with pytest.raises(ValidationError, match="identity does not match content"):
         FxObservationReference.model_validate(
-            {
-                "fx_observation_id": "sha256:" + "0" * 64,
-                "schema_version": "fx-observation-reference-v1",
-                "base_currency": "EUR",
-                "quote_currency": "USD",
-                "provider": "TEST_ONLY_SYNTHETIC_PROVIDER",
-                "methodology_version": "test-only-v1",
-                "quote_convention": FxQuoteConvention.DECLARED_REFERENCE,
-                "rate": "1.08",
-                "observed_at": _OBSERVED_AT,
-                "available_at": _AVAILABLE_AT,
-            }
+            {"fx_observation_id": "sha256:" + "0" * 64, **_complete_observation_content()}
         )
 
 
@@ -155,6 +169,103 @@ def test_observation_identity_changes_with_provider() -> None:
     first = _observation()
     second = _observation(provider="TEST_ONLY_OTHER_PROVIDER")
     assert first.fx_observation_id != second.fx_observation_id
+
+
+# --- Provenance and quality (Finding 2) -------------------------------------
+
+
+def test_observation_requires_source_record_id_or_checksum() -> None:
+    with pytest.raises(ValidationError, match="source_record_id or source_checksum"):
+        _observation(source_record_id=None, source_checksum=None)
+
+
+def test_observation_accepts_checksum_without_record_id() -> None:
+    observation = _observation(source_record_id=None, source_checksum="sha256:" + "a" * 64)
+    assert observation.source_record_id is None
+    assert observation.source_checksum == "sha256:" + "a" * 64
+
+
+def test_observation_rejects_blank_source_record_id_and_checksum() -> None:
+    with pytest.raises(ValidationError, match="source_record_id or source_checksum"):
+        _observation(source_record_id="   ", source_checksum="")
+
+
+def test_observation_has_no_default_provenance_or_quality_fields() -> None:
+    for missing_field in (
+        "source_dataset_id",
+        "source_dataset_version",
+        "ingestion_provenance",
+        "quality_status",
+    ):
+        content = _complete_observation_content()
+        del content[missing_field]
+        with pytest.raises(ValidationError, match=missing_field):
+            FxObservationReference.model_validate(
+                {"fx_observation_id": "sha256:" + "0" * 64, **content}
+            )
+
+
+def test_observation_identity_changes_with_source_dataset_id() -> None:
+    first = _observation()
+    second = _observation(source_dataset_id="TEST_ONLY_OTHER_DATASET")
+    assert first.fx_observation_id != second.fx_observation_id
+
+
+def test_observation_identity_changes_with_source_dataset_version() -> None:
+    first = _observation()
+    second = _observation(source_dataset_version="test-only-v2")
+    assert first.fx_observation_id != second.fx_observation_id
+
+
+def test_observation_identity_changes_with_source_checksum() -> None:
+    first = _observation(source_checksum=None)
+    second = _observation(source_checksum="sha256:" + "b" * 64)
+    assert first.fx_observation_id != second.fx_observation_id
+
+
+def test_observation_identity_changes_with_ingestion_provenance() -> None:
+    first = _observation()
+    second = _observation(ingestion_provenance="TEST_ONLY: a different synthetic fixture run")
+    assert first.fx_observation_id != second.fx_observation_id
+
+
+def test_observation_identity_changes_with_quality_status() -> None:
+    first = _observation(quality_status=FxObservationQualityStatus.UNVALIDATED)
+    second = _observation(quality_status=FxObservationQualityStatus.SUSPECT)
+    assert first.fx_observation_id != second.fx_observation_id
+
+
+# --- Decimal-only public identity boundary (Finding 3) ----------------------
+
+
+def test_calculate_fx_observation_id_rejects_float_rate_directly() -> None:
+    content = _complete_observation_content()
+    content["rate"] = 1.08
+    with pytest.raises(ValueError, match="float"):
+        calculate_fx_observation_id(content)
+
+
+def test_calculate_fx_observation_id_rejects_non_finite_rate_directly() -> None:
+    for bad_rate in ("NaN", "Infinity", "-Infinity"):
+        content = _complete_observation_content()
+        content["rate"] = bad_rate
+        with pytest.raises(ValueError, match="finite"):
+            calculate_fx_observation_id(content)
+
+
+def test_calculate_fx_observation_id_rejects_malformed_rate_directly() -> None:
+    content = _complete_observation_content()
+    content["rate"] = "not-a-decimal"
+    with pytest.raises(ValueError, match="valid Decimal"):
+        calculate_fx_observation_id(content)
+
+
+def test_calculate_fx_observation_id_accepts_decimal_and_string_rate_directly() -> None:
+    content = _complete_observation_content()
+    content["rate"] = "1.08"
+    assert calculate_fx_observation_id(content) == calculate_fx_observation_id(
+        {**content, "rate": Decimal("1.08")}
+    )
 
 
 # --- FxConversionPolicyConfiguration ----------------------------------------
