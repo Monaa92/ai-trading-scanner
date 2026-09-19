@@ -1,15 +1,19 @@
 """Immutable causal FX evidence, distinct conversion/valuation policy
-contracts, a source-checksum helper, and pure causal observation selection
-(including quote-side-aware selection) for Phase 6.2.
+contracts, a source-checksum helper, pure causal observation selection
+(including quote-side-aware selection), and a pure FX conversion calculation
+for Phase 6.2.
 
 Pure and evidence-only. This module defines what an FX observation, an
 executable conversion policy and a reporting-only valuation policy *are*,
-validates their internal consistency, and provides pure selection functions
-over an already causally released observation prefix. It does not compute a
-conversion, move capital, build balanced ledger legs, bind into the run
-manifest, or post any economic effect. No FX rate, quote convention or
-staleness threshold has an engine-supplied default: every value is
-caller-supplied evidence or an explicit, versioned policy choice.
+validates their internal consistency, provides pure selection functions over
+an already causally released observation prefix, and calculates the exact
+and rounded trading-currency amount for selling a positive base-currency
+amount under one causally selected V2 BID observation. A calculation from
+this module is not an executed or posted conversion: it moves no capital,
+builds no balanced ledger legs, and binds into no run manifest. No FX rate,
+quote convention, staleness threshold or currency minor-unit precision has an
+engine-supplied default: every value is caller-supplied evidence or an
+explicit, versioned policy/calculation choice.
 """
 
 from __future__ import annotations
@@ -17,7 +21,16 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DivisionByZero,
+    Inexact,
+    InvalidOperation,
+    Overflow,
+    localcontext,
+)
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
@@ -679,4 +692,261 @@ def select_eligible_fx_observation_for_valuation(
         reason=reason,
         evaluated_at=evaluated_at,
         fx_valuation_policy_id=policy.fx_valuation_policy_id,
+    )
+
+
+class FxConversionInputError(ValueError):
+    """Raised for an invalid input to `calculate_fx_conversion` itself.
+
+    This is a caller/configuration error — a malformed request — never a
+    causal data-availability outcome, mirroring the same distinction
+    `FxConversionPolicyUnsupportedError` already draws for an unsupported
+    policy. Covers a non-Decimal or float `base_amount`, a non-finite
+    (including NaN/Infinity) or non-positive `base_amount`, a
+    `trading_currency_minor_unit_digits` that is not a genuine, non-negative
+    `int` (explicitly including `bool`, which Python and Pydantic's default
+    lax `int` validation would otherwise silently accept as 0/1), a
+    `trading_currency_minor_unit_digits` too large to quantize against, a
+    `rounding_policy` this calculation does not yet know how to apply, and a
+    `base_amount`/`rate` multiplication that cannot be represented exactly at
+    this project's approved 34-digit Decimal precision (see
+    `_exact_multiply`). It does not, and cannot, cover an invalid or
+    non-finite observation rate or a currency-pair mismatch:
+    `FxObservationReference.rate` is already validated
+    `gt=0, allow_inf_nan=False` at construction, and every observation this
+    function can select already has its currency pair matched to the policy
+    by `select_eligible_fx_observation_for_conversion` itself.
+    """
+
+
+_EXACT_ARITHMETIC_CONTEXT = Context(
+    prec=34,
+    rounding=ROUND_HALF_EVEN,
+    traps=[Inexact, InvalidOperation, DivisionByZero, Overflow],
+)
+
+
+def _exact_multiply(base_amount: Decimal, rate: Decimal) -> Decimal:
+    """Multiply `base_amount * rate` at this project's approved 34-digit
+    `ROUND_HALF_EVEN` Decimal precision, failing closed instead of silently
+    rounding.
+
+    Decimal arithmetic rounds *every* operation to fit the ambient context's
+    precision, not just an explicit `.quantize()` call: a plain
+    `Context(prec=34, ...)` multiplication silently discards significant
+    digits whenever the true product needs more than 34 of them, with no
+    error and no visible indication anything was lost. That would make a
+    value labeled `exact_trading_amount` not actually exact, violating the
+    owner-approved no-intermediate-monetary-rounding rule.
+
+    Trapping the `Inexact` signal turns that silent truncation into a raised
+    `FxConversionInputError` instead. This does not widen the shared 34-digit
+    precision/rounding policy used everywhere else in this project
+    (`calculate_fill_costs`, `portfolio.py`, etc.) — the policy is unchanged;
+    this only refuses to mislabel a rounded product as exact.
+    """
+    with localcontext(_EXACT_ARITHMETIC_CONTEXT):
+        try:
+            return base_amount * rate
+        except Inexact as exc:
+            raise FxConversionInputError(
+                "base_amount * rate cannot be represented exactly at this "
+                "project's approved 34-digit Decimal precision; refusing to "
+                "return a silently rounded value as exact_trading_amount"
+            ) from exc
+
+
+def _validate_minor_unit_digits(value: object) -> int:
+    """Fail closed unless `value` is a genuine, non-negative `int`.
+
+    `bool` is a subclass of `int` in Python — and Pydantic's default lax
+    `int` field validation accepts it too — so it must be rejected
+    explicitly, never silently treated as a precision of 0 or 1. No other
+    non-`int` type (float, str, `None`, ...) is accepted either: this
+    project never silently coerces or clamps a caller-supplied precision.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise FxConversionInputError(
+            f"trading_currency_minor_unit_digits must be a genuine int, not {type(value).__name__}"
+        )
+    if value < 0:
+        raise FxConversionInputError("trading_currency_minor_unit_digits must be >= 0")
+    return value
+
+
+class FxConversionCalculation(BaseModel):
+    """Pure calculated result of selling a positive `base_amount` of
+    `base_currency` for `trading_currency`, under one causally selected V2
+    BID `FxObservationReference`.
+
+    This is a calculation, not an execution or a posting: it moves no
+    capital, mutates no balance, builds no balanced ledger leg, and binds
+    into no run manifest or broker order. It is not itself
+    content-identified, mirroring `FxConversionQuoteUnavailable` and
+    `FxObservationUnavailable` — a plain, auditable return value that
+    references existing identities (`fx_conversion_policy_id`,
+    `fx_observation_id`) rather than minting a new identity domain.
+
+    `exact_trading_amount` is `base_amount * rate`, computed once via
+    `_exact_multiply` at this project's approved 34-digit `ROUND_HALF_EVEN`
+    Decimal precision, with no intermediate rounding — constructing this
+    model with an `exact_trading_amount` that does not actually equal that
+    exact product (including one that was itself silently rounded to fit 34
+    digits) fails closed, since `validate_calculation` recomputes it through
+    the same `Inexact`-trapping `_exact_multiply` helper `calculate_fx_conversion`
+    uses, rather than through a separate context that could reproduce the same
+    precision loss and wrongly validate it. `rounded_trading_amount` is the
+    one, separate, final-boundary quantization of that exact amount to
+    `trading_currency_minor_unit_digits` decimal places using
+    `rounding_policy`. The two fields are never conflated: `exact_*` is the
+    unrounded calculation, `rounded_*` is a display/posting-boundary amount
+    only, and neither implies any capital has moved.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal["fx-conversion-calculation-v1"] = "fx-conversion-calculation-v1"
+    fx_conversion_policy_id: FxConversionPolicyId
+    fx_observation_id: FxObservationId
+    base_currency: str = Field(min_length=3, max_length=3, pattern=_CURRENCY_PATTERN)
+    trading_currency: str = Field(min_length=3, max_length=3, pattern=_CURRENCY_PATTERN)
+    base_amount: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+    rate: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+    evaluated_at: datetime
+    exact_trading_amount: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+    trading_currency_minor_unit_digits: Annotated[int, Field(ge=0)]
+    rounding_policy: CostRoundingPolicy
+    rounded_trading_amount: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+
+    @field_validator(
+        "base_amount", "rate", "exact_trading_amount", "rounded_trading_amount", mode="before"
+    )
+    @classmethod
+    def reject_float_amounts(cls, value: object, info: ValidationInfo) -> object:
+        return _reject_float(value, str(info.field_name))
+
+    @field_validator("trading_currency_minor_unit_digits", mode="before")
+    @classmethod
+    def reject_non_genuine_int_minor_unit_digits(cls, value: object) -> object:
+        return _validate_minor_unit_digits(value)
+
+    @field_validator("evaluated_at")
+    @classmethod
+    def normalize_evaluated_at(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+    @model_validator(mode="after")
+    def validate_calculation(self) -> Self:
+        if self.base_currency == self.trading_currency:
+            raise ValueError("an FX conversion calculation requires two distinct currencies")
+        expected_exact = _exact_multiply(self.base_amount, self.rate)
+        if self.exact_trading_amount != expected_exact:
+            raise ValueError("exact_trading_amount must equal base_amount * rate, unrounded")
+        expected_rounded = _quantize_to_minor_unit(
+            self.exact_trading_amount, self.trading_currency_minor_unit_digits, self.rounding_policy
+        )
+        if self.rounded_trading_amount != expected_rounded:
+            raise ValueError(
+                "rounded_trading_amount must equal exact_trading_amount quantized to "
+                "trading_currency_minor_unit_digits using rounding_policy"
+            )
+        return self
+
+
+def _quantize_to_minor_unit(
+    exact_amount: Decimal, minor_unit_digits: int, rounding_policy: CostRoundingPolicy
+) -> Decimal:
+    if rounding_policy is not CostRoundingPolicy.ROUND_HALF_EVEN_V1:
+        raise FxConversionInputError(
+            f"calculate_fx_conversion does not support rounding_policy {rounding_policy!r}"
+        )
+    quantum = Decimal(1).scaleb(-minor_unit_digits)
+    with localcontext(Context(prec=34, rounding=ROUND_HALF_EVEN)):
+        try:
+            return exact_amount.quantize(quantum, rounding=ROUND_HALF_EVEN)
+        except InvalidOperation as exc:
+            raise FxConversionInputError(
+                f"exact_trading_amount cannot be quantized to {minor_unit_digits} minor-unit digits"
+            ) from exc
+
+
+def calculate_fx_conversion(
+    released_prefix: Sequence[FxObservationReference],
+    policy: FxConversionPolicyConfiguration,
+    base_amount: Decimal,
+    trading_currency_minor_unit_digits: int,
+    evaluated_at: datetime,
+) -> FxConversionCalculation | FxConversionQuoteUnavailable:
+    """Pure calculation of selling `base_amount` of the base currency for the
+    trading currency, under one causally selected, quote-side-matched V2 BID
+    observation. Computes no capital movement, balanced ledger leg, fee, or
+    manifest binding — an executable or posted conversion is a separate,
+    not-yet-implemented step.
+
+    Selects the observation itself, by delegating entirely to
+    `select_eligible_fx_observation_for_conversion` over the supplied
+    `released_prefix`/`policy`/`evaluated_at` — it never accepts an
+    already-selected `FxObservationReference` from the caller. This is what
+    makes the V2/BID/causal-selection boundary impossible to bypass: there is
+    no code path here that can use an observation this function did not
+    itself select through that existing, already-enforced boundary. A `V1`
+    policy, an unsupported direction, or a non-`SELL_BASE_FOR_TRADING`
+    direction is rejected by that selector's own
+    `FxConversionPolicyUnsupportedError`, propagated unchanged. When no
+    causally eligible, quote-side-matched observation exists, the selector's
+    typed `FxConversionQuoteUnavailable` evidence is returned directly and no
+    calculation is attempted.
+
+    Raises `FxConversionInputError` for an invalid `base_amount` (float,
+    non-Decimal, non-finite/NaN/Infinity, zero, or negative), a
+    `trading_currency_minor_unit_digits` that is not a genuine, non-negative
+    `int` (a `bool` is explicitly rejected, never silently treated as 0/1) or
+    that is too large to quantize against, a `rounding_policy` this
+    calculation does not support, or a `base_amount`/`rate` multiplication
+    that cannot be represented exactly at this project's approved 34-digit
+    Decimal precision (see `_exact_multiply`) — this function never returns a
+    silently rounded product under the name `exact_trading_amount`.
+    `trading_currency_minor_unit_digits` has no default: callers must state
+    explicitly how many decimal places the trading currency uses (never
+    assumed to be 2, and never silently clamped).
+
+    `exact_trading_amount = base_amount * rate` is computed once, unrounded,
+    via `_exact_multiply`. `rounded_trading_amount` is a single, separate
+    quantization of that exact amount to `trading_currency_minor_unit_digits`
+    decimal places — the one documented final rounding boundary. Both are
+    returned, never conflated.
+    """
+    if isinstance(base_amount, float):
+        raise FxConversionInputError("base_amount must use Decimal, not float")
+    if not isinstance(base_amount, Decimal):
+        raise FxConversionInputError("base_amount must be a Decimal value")
+    if not base_amount.is_finite() or base_amount <= 0:
+        raise FxConversionInputError("base_amount must be a finite, positive Decimal value")
+    trading_currency_minor_unit_digits = _validate_minor_unit_digits(
+        trading_currency_minor_unit_digits
+    )
+
+    selection = select_eligible_fx_observation_for_conversion(released_prefix, policy, evaluated_at)
+    if isinstance(selection, FxConversionQuoteUnavailable):
+        return selection
+    observation = selection
+
+    normalized_evaluated_at = _aware_utc(evaluated_at)
+    exact_trading_amount = _exact_multiply(base_amount, observation.rate)
+    rounded_trading_amount = _quantize_to_minor_unit(
+        exact_trading_amount, trading_currency_minor_unit_digits, policy.rounding_policy
+    )
+
+    return FxConversionCalculation(
+        fx_conversion_policy_id=policy.fx_conversion_policy_id,
+        fx_observation_id=observation.fx_observation_id,
+        base_currency=policy.base_currency,
+        trading_currency=policy.trading_currency,
+        base_amount=base_amount,
+        rate=observation.rate,
+        evaluated_at=normalized_evaluated_at,
+        exact_trading_amount=exact_trading_amount,
+        trading_currency_minor_unit_digits=trading_currency_minor_unit_digits,
+        rounding_policy=policy.rounding_policy,
+        rounded_trading_amount=rounded_trading_amount,
     )

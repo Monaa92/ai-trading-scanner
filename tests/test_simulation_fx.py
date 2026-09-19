@@ -14,15 +14,17 @@ from __future__ import annotations
 import inspect
 import re
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 
 import pytest
 from pydantic import ValidationError
 
-from ai_trading_scanner.domain import FxConversionPolicyId, FxValuationPolicyId
+from ai_trading_scanner.domain import FxConversionPolicyId, FxObservationId, FxValuationPolicyId
 from ai_trading_scanner.simulation import (
     CostRoundingPolicy,
+    FxConversionCalculation,
     FxConversionDirection,
+    FxConversionInputError,
     FxConversionPolicyConfiguration,
     FxConversionPolicyUnsupportedError,
     FxConversionQuoteUnavailable,
@@ -34,6 +36,7 @@ from ai_trading_scanner.simulation import (
     FxQuoteUnavailableReason,
     FxValuationPolicyConfiguration,
     FxValuationQuoteUnavailable,
+    calculate_fx_conversion,
     calculate_fx_conversion_policy_id,
     calculate_fx_observation_id,
     calculate_fx_source_checksum,
@@ -1297,3 +1300,378 @@ def test_existing_causal_selection_function_is_behaviorally_unchanged() -> None:
     result = select_eligible_fx_observation([observation], policy, _T)
     assert result == observation
     assert isinstance(result, FxObservationReference)
+
+
+# --- calculate_fx_conversion (pure SELL_BASE_FOR_TRADING calculation) -------
+
+
+def test_calculate_fx_conversion_cannot_accept_a_caller_selected_observation() -> None:
+    """Structural proof of the anti-bypass boundary: calculate_fx_conversion
+    has no parameter through which a caller could hand it an
+    already-selected, non-conforming FxObservationReference. It only accepts
+    the raw released prefix, the policy, the amount, minor-unit digits and
+    evaluated_at -- the observation is always selected internally through
+    select_eligible_fx_observation_for_conversion."""
+    parameters = set(inspect.signature(calculate_fx_conversion).parameters)
+    assert parameters == {
+        "released_prefix",
+        "policy",
+        "base_amount",
+        "trading_currency_minor_unit_digits",
+        "evaluated_at",
+    }
+    assert not any("observation" in name for name in parameters)
+
+
+def test_calculate_fx_conversion_valid_v2_eur_usd_bid() -> None:
+    """A qualifying V2 BID policy and one eligible BID observation produce a
+    calculation referencing exactly that policy and that observation."""
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID, rate="1.08375")
+    result = calculate_fx_conversion([observation], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionCalculation)
+    assert result.fx_conversion_policy_id == policy.fx_conversion_policy_id
+    assert result.fx_observation_id == observation.fx_observation_id
+    assert result.base_currency == "EUR"
+    assert result.trading_currency == "USD"
+    assert result.base_amount == Decimal("100")
+    assert result.rate == Decimal("1.08375")
+    assert result.evaluated_at == _T
+
+
+def test_calculate_fx_conversion_exact_and_rounded_amounts_are_distinguished() -> None:
+    """base_amount * rate = 100 * 1.08375 = 108.37500 exactly (no rounding
+    needed for the exact multiplication at 34-digit precision). Quantizing
+    to 2 minor-unit digits with ROUND_HALF_EVEN rounds the exact halfway
+    value 108.375 up to the even digit, 108.38 -- distinct from the exact,
+    unrounded 108.37500."""
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID, rate="1.08375")
+    result = calculate_fx_conversion([observation], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionCalculation)
+    assert result.exact_trading_amount == Decimal("108.37500")
+    assert result.rounded_trading_amount == Decimal("108.38")
+    assert result.exact_trading_amount != result.rounded_trading_amount
+    assert result.trading_currency_minor_unit_digits == 2
+    assert result.rounding_policy is CostRoundingPolicy.ROUND_HALF_EVEN_V1
+
+
+@pytest.mark.parametrize(
+    ("minor_unit_digits", "rate", "base_amount", "expected_exact", "expected_rounded"),
+    [
+        (0, "163.5", "50", Decimal("8175.0"), Decimal("8175")),
+        (3, "1.234565", "10", Decimal("12.345650"), Decimal("12.346")),
+    ],
+)
+def test_calculate_fx_conversion_supports_non_two_decimal_minor_units(
+    minor_unit_digits: int,
+    rate: str,
+    base_amount: str,
+    expected_exact: Decimal,
+    expected_rounded: Decimal,
+) -> None:
+    """No two-decimal-place assumption: a 0-minor-unit and a 3-minor-unit
+    currency both quantize correctly at their own explicit, caller-supplied
+    trading_currency_minor_unit_digits."""
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID, rate=rate)
+    result = calculate_fx_conversion(
+        [observation], policy, Decimal(base_amount), minor_unit_digits, _T
+    )
+    assert isinstance(result, FxConversionCalculation)
+    assert result.exact_trading_amount == expected_exact
+    assert result.rounded_trading_amount == expected_rounded
+
+
+def test_calculate_fx_conversion_has_no_default_minor_unit_digits() -> None:
+    """trading_currency_minor_unit_digits is a required positional/keyword
+    argument with no default -- it must always be supplied explicitly."""
+    parameter = inspect.signature(calculate_fx_conversion).parameters[
+        "trading_currency_minor_unit_digits"
+    ]
+    assert parameter.default is inspect.Parameter.empty
+
+
+def test_calculate_fx_conversion_rejects_v1_eur_usd_ask_bypass() -> None:
+    """Reproduces Codex's exact confirmed V1 EUR/USD ASK bypass at the
+    calculation boundary too: calculate_fx_conversion must reject a V1 policy
+    exactly like select_eligible_fx_observation_for_conversion does, since it
+    delegates directly to that same selector."""
+    v1_ask_policy = _policy(
+        base_currency="EUR", trading_currency="USD", quote_convention=FxQuoteConvention.ASK
+    )
+    assert v1_ask_policy.schema_version == "fx-conversion-policy-v1"
+    ask_observation = _eligible_observation(quote_convention=FxQuoteConvention.ASK)
+    with pytest.raises(FxConversionPolicyUnsupportedError, match="fx-conversion-policy-v2"):
+        calculate_fx_conversion([ask_observation], v1_ask_policy, Decimal("100"), 2, _T)
+
+
+def test_calculate_fx_conversion_rejects_v1_even_with_coincidentally_correct_bid() -> None:
+    v1_bid_policy = _policy(
+        base_currency="EUR", trading_currency="USD", quote_convention=FxQuoteConvention.BID
+    )
+    bid_observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    with pytest.raises(FxConversionPolicyUnsupportedError):
+        calculate_fx_conversion([bid_observation], v1_bid_policy, Decimal("100"), 2, _T)
+
+
+@pytest.mark.parametrize(
+    "available_convention",
+    [FxQuoteConvention.ASK, FxQuoteConvention.MID, FxQuoteConvention.DECLARED_REFERENCE],
+)
+def test_calculate_fx_conversion_never_substitutes_a_different_side_for_bid(
+    available_convention: FxQuoteConvention,
+) -> None:
+    """ASK, MID and DECLARED_REFERENCE observations must never be substituted
+    for the required BID side; the calculation must fail closed with typed
+    evidence rather than computing against the wrong quote."""
+    policy = _conversion_policy_v2()
+    wrong_side_observation = _eligible_observation(quote_convention=available_convention)
+    result = calculate_fx_conversion([wrong_side_observation], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.REQUIRED_QUOTE_SIDE_UNAVAILABLE
+    assert result.fx_conversion_policy_id == policy.fx_conversion_policy_id
+
+
+def test_calculate_fx_conversion_fails_closed_when_no_observation_at_all() -> None:
+    policy = _conversion_policy_v2()
+    result = calculate_fx_conversion([], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.NO_ELIGIBLE_OBSERVATION
+
+
+def test_calculate_fx_conversion_fails_closed_on_stale_observation() -> None:
+    policy = _conversion_policy_v2(maximum_observation_staleness_seconds=60)
+    stale_observation = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID,
+        observed_at=_T - timedelta(seconds=1000),
+        available_at=_T,
+    )
+    result = calculate_fx_conversion([stale_observation], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.NO_ELIGIBLE_OBSERVATION
+
+
+def test_calculate_fx_conversion_fails_closed_on_unreleased_observation() -> None:
+    policy = _conversion_policy_v2()
+    unreleased_observation = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID, available_at=_T + timedelta(seconds=1)
+    )
+    result = calculate_fx_conversion([unreleased_observation], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.NO_ELIGIBLE_OBSERVATION
+
+
+@pytest.mark.parametrize(
+    "quality_status", [FxObservationQualityStatus.UNVALIDATED, FxObservationQualityStatus.SUSPECT]
+)
+def test_calculate_fx_conversion_fails_closed_on_non_validated_quality(
+    quality_status: FxObservationQualityStatus,
+) -> None:
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID, quality_status=quality_status
+    )
+    result = calculate_fx_conversion([observation], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.NO_ELIGIBLE_OBSERVATION
+
+
+def test_calculate_fx_conversion_fails_closed_on_currency_mismatch() -> None:
+    """An observation for a different currency pair is never eligible,
+    regardless of quote side."""
+    policy = _conversion_policy_v2(base_currency="EUR", trading_currency="USD")
+    wrong_pair_observation = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID, base_currency="EUR", quote_currency="GBP"
+    )
+    result = calculate_fx_conversion([wrong_pair_observation], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.NO_ELIGIBLE_OBSERVATION
+
+
+@pytest.mark.parametrize("invalid_amount", ["0", "-1", "-100.50"])
+def test_calculate_fx_conversion_rejects_zero_and_negative_amounts(invalid_amount: str) -> None:
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    with pytest.raises(FxConversionInputError, match="positive"):
+        calculate_fx_conversion([observation], policy, Decimal(invalid_amount), 2, _T)
+
+
+def test_calculate_fx_conversion_rejects_float_amount() -> None:
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    with pytest.raises(FxConversionInputError, match="float"):
+        calculate_fx_conversion([observation], policy, 100.0, 2, _T)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("non_finite", ["NaN", "Infinity", "-Infinity"])
+def test_calculate_fx_conversion_rejects_non_finite_amount(non_finite: str) -> None:
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    with pytest.raises(FxConversionInputError, match="finite"):
+        calculate_fx_conversion([observation], policy, Decimal(non_finite), 2, _T)
+
+
+def test_calculate_fx_conversion_rejects_negative_minor_unit_digits() -> None:
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    with pytest.raises(FxConversionInputError, match="minor_unit_digits"):
+        calculate_fx_conversion([observation], policy, Decimal("100"), -1, _T)
+
+
+@pytest.mark.parametrize(
+    ("label", "invalid_minor_unit_digits"),
+    [
+        ("bool True", True),
+        ("bool False", False),
+        ("float", 2.5),
+        ("string", "2"),
+        ("None", None),
+    ],
+)
+def test_calculate_fx_conversion_rejects_non_genuine_int_minor_unit_digits(
+    label: str, invalid_minor_unit_digits: object
+) -> None:
+    """bool is a Python int subclass (and Pydantic's default lax int
+    validation accepts it too) but must never be silently treated as a
+    precision of 0 or 1; no other non-int type is accepted either."""
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    with pytest.raises(FxConversionInputError, match="genuine int"):
+        calculate_fx_conversion(
+            [observation],
+            policy,
+            Decimal("100"),
+            invalid_minor_unit_digits,  # type: ignore[arg-type]
+            _T,
+        )
+
+
+def test_calculate_fx_conversion_rejects_excessively_large_minor_unit_digits() -> None:
+    """A very large minor-unit-digit count fails closed with a typed,
+    documented FxConversionInputError rather than an unexpected raw Decimal
+    exception, and is never silently clamped to a smaller value."""
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    with pytest.raises(FxConversionInputError, match="cannot be quantized"):
+        calculate_fx_conversion([observation], policy, Decimal("100"), 10**6, _T)
+
+
+def test_calculate_fx_conversion_fails_closed_when_multiplication_needs_more_than_34_digits() -> (
+    None
+):
+    """base_amount and rate each carry 18 significant digits; their true
+    product needs 36 significant digits and cannot be represented exactly at
+    this project's approved 34-digit precision. calculate_fx_conversion must
+    fail closed with FxConversionInputError rather than silently returning a
+    rounded value labeled exact_trading_amount."""
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID, rate="987654321.123456789"
+    )
+    with pytest.raises(FxConversionInputError, match="cannot be represented exactly"):
+        calculate_fx_conversion([observation], policy, Decimal("123456789012345678"), 2, _T)
+
+
+def test_calculate_fx_conversion_succeeds_when_multiplication_fits_within_34_digits() -> None:
+    """The same shape of calculation succeeds, with a genuinely exact
+    exact_trading_amount, whenever the true product needs no more than 34
+    significant digits."""
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID, rate="1.08375")
+    result = calculate_fx_conversion([observation], policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionCalculation)
+    assert result.exact_trading_amount == Decimal("108.37500")
+
+
+def test_calculate_fx_conversion_result_validator_rejects_a_precision_losing_exact_amount() -> None:
+    """Direct-construction proof that FxConversionCalculation's own validator
+    cannot be tricked into accepting a silently-rounded product as exact: it
+    recomputes exact_trading_amount through the same Inexact-trapping
+    _exact_multiply helper calculate_fx_conversion uses, not through a
+    separate context that could reproduce the same precision loss."""
+    base_amount = Decimal("123456789012345678")
+    rate = Decimal("987654321.123456789")
+    with localcontext(Context(prec=34, rounding=ROUND_HALF_EVEN)):
+        silently_rounded_product = base_amount * rate
+    with pytest.raises(ValidationError, match="cannot be represented exactly"):
+        FxConversionCalculation(
+            fx_conversion_policy_id=FxConversionPolicyId.parse("sha256:" + "0" * 64),
+            fx_observation_id=FxObservationId.parse("sha256:" + "1" * 64),
+            base_currency="EUR",
+            trading_currency="USD",
+            base_amount=base_amount,
+            rate=rate,
+            evaluated_at=_T,
+            exact_trading_amount=silently_rounded_product,
+            trading_currency_minor_unit_digits=2,
+            rounding_policy=CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+            rounded_trading_amount=Decimal("121932631140070109974089316.76"),
+        )
+
+
+def test_calculate_fx_conversion_still_enforces_v2_bid_causal_selection_after_the_fix() -> None:
+    """Re-confirms, after the numerical-safety fix, that the V1-bypass
+    rejection, the required-BID-side enforcement and the causal-eligibility
+    rules are all still exercised through the same, unmodified
+    select_eligible_fx_observation_for_conversion delegation."""
+    v1_ask_policy = _policy(
+        base_currency="EUR", trading_currency="USD", quote_convention=FxQuoteConvention.ASK
+    )
+    ask_observation = _eligible_observation(quote_convention=FxQuoteConvention.ASK)
+    with pytest.raises(FxConversionPolicyUnsupportedError):
+        calculate_fx_conversion([ask_observation], v1_ask_policy, Decimal("100"), 2, _T)
+
+    v2_policy = _conversion_policy_v2()
+    result = calculate_fx_conversion([ask_observation], v2_policy, Decimal("100"), 2, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.REQUIRED_QUOTE_SIDE_UNAVAILABLE
+
+    bid_observation = _eligible_observation(quote_convention=FxQuoteConvention.BID, rate="1.08375")
+    ok_result = calculate_fx_conversion([bid_observation], v2_policy, Decimal("100"), 2, _T)
+    assert isinstance(ok_result, FxConversionCalculation)
+    assert ok_result.fx_observation_id == bid_observation.fx_observation_id
+
+
+def test_calculate_fx_conversion_is_deterministic() -> None:
+    """Calculating twice from identical inputs produces an identical result."""
+    policy = _conversion_policy_v2()
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID, rate="1.08375")
+    first = calculate_fx_conversion([observation], policy, Decimal("100"), 2, _T)
+    second = calculate_fx_conversion([observation], policy, Decimal("100"), 2, _T)
+    assert first == second
+
+
+def test_calculate_fx_conversion_does_not_mint_a_new_identity_domain() -> None:
+    """FxConversionCalculation is a plain evidence-shaped result, referencing
+    existing policy/observation identities rather than carrying its own new
+    content-identified primary key -- mirroring FxConversionQuoteUnavailable
+    and FxObservationUnavailable."""
+    assert "schema_version" in FxConversionCalculation.model_fields
+    identity_like_fields = {
+        name
+        for name in FxConversionCalculation.model_fields
+        if name.endswith("_id") and name not in {"fx_conversion_policy_id", "fx_observation_id"}
+    }
+    assert identity_like_fields == set()
+
+
+def test_calculate_fx_conversion_does_not_change_existing_v1_or_v2_identity_fixtures() -> None:
+    """Building on calculate_fx_conversion must not touch the pinned V1
+    identity or the already-accepted V2 conversion-policy identity
+    algorithm: both still round-trip through calculate_fx_conversion_policy_id
+    exactly as constructed."""
+    v1_policy = _policy(base_currency="EUR", trading_currency="USD")
+    assert calculate_fx_conversion_policy_id(v1_policy) == v1_policy.fx_conversion_policy_id
+    v2_policy = _conversion_policy_v2()
+    assert calculate_fx_conversion_policy_id(v2_policy) == v2_policy.fx_conversion_policy_id
+
+
+def test_calculate_fx_conversion_result_is_not_a_posted_or_executed_conversion() -> None:
+    """Structural proof of the calculated-vs-executed boundary: the result
+    type carries no capital-movement, balance, fill, order or posting
+    field."""
+    forbidden_substrings = ("balance", "capital", "fill", "order", "posted", "executed", "ledger")
+    for field_name in FxConversionCalculation.model_fields:
+        lowered = field_name.lower()
+        assert not any(substring in lowered for substring in forbidden_substrings), field_name
