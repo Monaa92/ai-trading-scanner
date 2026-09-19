@@ -233,3 +233,20 @@ class FxConversionPolicyId(Identifier):
 
 class FxValuationPolicyId(Identifier):
     """Content-derived identity of a versioned, reporting-only FX valuation policy."""
+
+
+class FxConversionRequestId(Identifier):
+    """Content-derived identity of one FX conversion request, independent of any trade proposal."""
+
+
+class FxConversionReservationId(Identifier):
+    """Content-derived identity of one FX-specific capital reservation contract."""
+
+
+class FxConversionAuthorizationId(Identifier):
+    """Content-derived identity of one authorization binding an FX
+    conversion calculation to a reservation."""
+
+
+class FxConversionPostingEvidenceId(Identifier):
+    """Content-derived identity of one proposed FX conversion posting's evidence record."""

@@ -756,7 +756,9 @@ def _exact_multiply(base_amount: Decimal, rate: Decimal) -> Decimal:
             ) from exc
 
 
-def _validate_minor_unit_digits(value: object) -> int:
+def validate_minor_unit_digits(
+    value: object, field_name: str = "trading_currency_minor_unit_digits"
+) -> int:
     """Fail closed unless `value` is a genuine, non-negative `int`.
 
     `bool` is a subclass of `int` in Python — and Pydantic's default lax
@@ -764,13 +766,19 @@ def _validate_minor_unit_digits(value: object) -> int:
     explicitly, never silently treated as a precision of 0 or 1. No other
     non-`int` type (float, str, `None`, ...) is accepted either: this
     project never silently coerces or clamps a caller-supplied precision.
+
+    Public (not module-private) because any currency-minor-unit-digits
+    input in this project's FX contracts shares this exact validation
+    shape — e.g. a proposed base-currency posting-eligibility check reuses
+    it rather than duplicating the same rule. `field_name` only changes
+    the error message; the rule itself never varies by field.
     """
     if isinstance(value, bool) or not isinstance(value, int):
         raise FxConversionInputError(
-            f"trading_currency_minor_unit_digits must be a genuine int, not {type(value).__name__}"
+            f"{field_name} must be a genuine int, not {type(value).__name__}"
         )
     if value < 0:
-        raise FxConversionInputError("trading_currency_minor_unit_digits must be >= 0")
+        raise FxConversionInputError(f"{field_name} must be >= 0")
     return value
 
 
@@ -828,7 +836,7 @@ class FxConversionCalculation(BaseModel):
     @field_validator("trading_currency_minor_unit_digits", mode="before")
     @classmethod
     def reject_non_genuine_int_minor_unit_digits(cls, value: object) -> object:
-        return _validate_minor_unit_digits(value)
+        return validate_minor_unit_digits(value)
 
     @field_validator("evaluated_at")
     @classmethod
@@ -922,7 +930,7 @@ def calculate_fx_conversion(
         raise FxConversionInputError("base_amount must be a Decimal value")
     if not base_amount.is_finite() or base_amount <= 0:
         raise FxConversionInputError("base_amount must be a finite, positive Decimal value")
-    trading_currency_minor_unit_digits = _validate_minor_unit_digits(
+    trading_currency_minor_unit_digits = validate_minor_unit_digits(
         trading_currency_minor_unit_digits
     )
 
