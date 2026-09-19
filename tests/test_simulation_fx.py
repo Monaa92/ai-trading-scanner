@@ -1,32 +1,46 @@
-"""Behavior tests for the Phase 6.2 FX observation, conversion-policy and pure
-causal observation-selection contracts.
+"""Behavior tests for the Phase 6.2 FX observation, conversion/valuation-policy,
+source-checksum and pure observation-selection contracts (causal-only and
+quote-side-aware).
 
 The observation/policy contracts are pure evidence/policy shapes: no FX rate,
 quote convention or staleness threshold has an engine default. Selection is
-pure causal filtering only — no conversion, quote-side selection,
-balanced-leg calculation or manifest binding; several tests below assert
-that boundary explicitly.
+pure filtering only — no actual conversion arithmetic, balanced-leg
+calculation, capital movement or manifest binding; several tests below
+assert that boundary explicitly.
 """
 
 from __future__ import annotations
 
+import inspect
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
+from ai_trading_scanner.domain import FxConversionPolicyId, FxValuationPolicyId
 from ai_trading_scanner.simulation import (
     CostRoundingPolicy,
+    FxConversionDirection,
     FxConversionPolicyConfiguration,
+    FxConversionPolicyUnsupportedError,
+    FxConversionQuoteUnavailable,
     FxObservationQualityStatus,
     FxObservationReference,
     FxObservationUnavailable,
     FxObservationUnavailableReason,
     FxQuoteConvention,
+    FxQuoteUnavailableReason,
+    FxValuationPolicyConfiguration,
+    FxValuationQuoteUnavailable,
     calculate_fx_conversion_policy_id,
     calculate_fx_observation_id,
+    calculate_fx_source_checksum,
+    calculate_fx_valuation_policy_id,
     select_eligible_fx_observation,
+    select_eligible_fx_observation_for_conversion,
+    select_eligible_fx_observation_for_valuation,
 )
 from ai_trading_scanner.simulation import fx as fx_module
 
@@ -483,17 +497,23 @@ def test_policy_identity_changes_with_rounding_policy() -> None:
 
 
 def test_fx_module_implements_no_conversion_execution_or_posting_symbols() -> None:
-    """Pure observation selection exists; conversion/posting/quote-side logic does not."""
+    """Pure causal and quote-side-aware selection exist; actual conversion
+    arithmetic, balanced-leg construction, posting and manifest binding do
+    not."""
     forbidden_names = {
         "resolve_fx_conversion",
-        "select_quote_side",
+        "compute_fx_conversion",
         "FxConversionLegPair",
         "post_fx_conversion",
         "apply_fx_conversion",
+        "bind_fx_conversion_policy_to_manifest",
     }
     exported = set(dir(fx_module))
     assert forbidden_names.isdisjoint(exported)
     assert "select_eligible_fx_observation" in exported
+    assert "select_eligible_fx_observation_for_conversion" in exported
+    assert "select_eligible_fx_observation_for_valuation" in exported
+    assert "calculate_fx_source_checksum" in exported
 
 
 # --- select_eligible_fx_observation (pure causal selection) -----------------
@@ -683,3 +703,597 @@ def test_selection_rejects_naive_evaluated_at() -> None:
     observation = _eligible_observation()
     with pytest.raises(ValueError, match="timezone-aware"):
         select_eligible_fx_observation([observation], policy, datetime(2026, 1, 2, 15, 0, 0))
+
+
+# --- calculate_fx_source_checksum -------------------------------------------
+
+
+def _checksum(
+    *,
+    base_currency: str = "EUR",
+    quote_currency: str = "USD",
+    provider: str = "TEST_ONLY_SYNTHETIC_PROVIDER",
+    quote_convention: FxQuoteConvention = FxQuoteConvention.BID,
+    rate: Decimal | str = "1.08",
+    observed_at: datetime = _OBSERVED_AT,
+) -> str:
+    return calculate_fx_source_checksum(
+        base_currency=base_currency,
+        quote_currency=quote_currency,
+        provider=provider,
+        quote_convention=quote_convention,
+        rate=rate,
+        observed_at=observed_at,
+    )
+
+
+def test_fx_source_checksum_is_stable_for_identical_content() -> None:
+    assert _checksum() == _checksum()
+
+
+def test_fx_source_checksum_matches_expected_format() -> None:
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", _checksum())
+
+
+def test_fx_source_checksum_is_decimal_scale_invariant() -> None:
+    assert _checksum(rate="1.08") == _checksum(rate="1.0800")
+
+
+def test_fx_source_checksum_accepts_decimal_and_string_rate_identically() -> None:
+    assert _checksum(rate="1.08") == _checksum(rate=Decimal("1.08"))
+
+
+def test_fx_source_checksum_changes_with_rate() -> None:
+    assert _checksum(rate="1.08") != _checksum(rate="1.09")
+
+
+def test_fx_source_checksum_changes_with_quote_convention() -> None:
+    assert _checksum(quote_convention=FxQuoteConvention.BID) != _checksum(
+        quote_convention=FxQuoteConvention.ASK
+    )
+
+
+def test_fx_source_checksum_changes_with_provider() -> None:
+    assert _checksum(provider="TEST_ONLY_A") != _checksum(provider="TEST_ONLY_B")
+
+
+def test_fx_source_checksum_changes_with_observed_at() -> None:
+    assert _checksum(observed_at=_OBSERVED_AT) != _checksum(
+        observed_at=_OBSERVED_AT + timedelta(seconds=1)
+    )
+
+
+def test_fx_source_checksum_changes_with_currency_pair() -> None:
+    assert _checksum(base_currency="EUR") != _checksum(base_currency="GBP")
+
+
+def test_fx_source_checksum_has_no_available_at_parameter() -> None:
+    """available_at is our ingestion timing, not the provider's fact; the
+    function does not even accept it, proving the fact/handling boundary
+    structurally rather than only by convention."""
+    assert "available_at" not in inspect.signature(calculate_fx_source_checksum).parameters
+
+
+def test_fx_source_checksum_rejects_float_rate() -> None:
+    with pytest.raises(ValueError, match="float"):
+        _checksum(rate=1.08)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad_rate", ["NaN", "Infinity", "-Infinity"])
+def test_fx_source_checksum_rejects_non_finite_rate(bad_rate: str) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        _checksum(rate=bad_rate)
+
+
+def test_fx_source_checksum_rejects_naive_observed_at() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        _checksum(observed_at=datetime(2026, 1, 2, 14, 30))
+
+
+# --- FxValuationPolicyConfiguration ------------------------------------------
+
+
+def _valuation_policy(**changes: object) -> FxValuationPolicyConfiguration:
+    content: dict[str, object] = {
+        "schema_version": "fx-valuation-policy-v1",
+        "policy_name": "TEST_ONLY_VALUATION_POLICY",
+        "model_version": "test-only-v1",
+        "base_currency": "EUR",
+        "trading_currency": "USD",
+        "quote_convention": FxQuoteConvention.MID,
+        "maximum_observation_staleness_seconds": 60,
+        "rounding_policy": CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+    }
+    content.update(changes)
+    return FxValuationPolicyConfiguration.model_validate(
+        {"fx_valuation_policy_id": calculate_fx_valuation_policy_id(content), **content}
+    )
+
+
+def test_valuation_policy_accepts_mid() -> None:
+    policy = _valuation_policy(quote_convention=FxQuoteConvention.MID)
+    assert policy.quote_convention is FxQuoteConvention.MID
+
+
+def test_valuation_policy_accepts_declared_reference() -> None:
+    policy = _valuation_policy(quote_convention=FxQuoteConvention.DECLARED_REFERENCE)
+    assert policy.quote_convention is FxQuoteConvention.DECLARED_REFERENCE
+
+
+@pytest.mark.parametrize("transactional_side", [FxQuoteConvention.BID, FxQuoteConvention.ASK])
+def test_valuation_policy_rejects_transactional_quote_side(
+    transactional_side: FxQuoteConvention,
+) -> None:
+    with pytest.raises(ValidationError, match="MID or DECLARED_REFERENCE"):
+        _valuation_policy(quote_convention=transactional_side)
+
+
+def test_valuation_policy_requires_two_distinct_currencies() -> None:
+    with pytest.raises(ValidationError, match="two distinct currencies"):
+        _valuation_policy(base_currency="EUR", trading_currency="EUR")
+
+
+def test_valuation_policy_has_no_default_staleness_threshold() -> None:
+    content: dict[str, object] = {
+        "schema_version": "fx-valuation-policy-v1",
+        "policy_name": "TEST_ONLY_VALUATION_POLICY",
+        "model_version": "test-only-v1",
+        "base_currency": "EUR",
+        "trading_currency": "USD",
+        "quote_convention": FxQuoteConvention.MID,
+        "rounding_policy": CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+    }
+    with pytest.raises(ValidationError, match="maximum_observation_staleness_seconds"):
+        FxValuationPolicyConfiguration.model_validate(
+            {"fx_valuation_policy_id": "sha256:" + "0" * 64, **content}
+        )
+
+
+def test_valuation_policy_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        _valuation_policy(unexpected_field="not allowed")
+
+
+def test_valuation_policy_rejects_forged_identity() -> None:
+    content: dict[str, object] = {
+        "schema_version": "fx-valuation-policy-v1",
+        "policy_name": "TEST_ONLY_VALUATION_POLICY",
+        "model_version": "test-only-v1",
+        "base_currency": "EUR",
+        "trading_currency": "USD",
+        "quote_convention": FxQuoteConvention.MID,
+        "maximum_observation_staleness_seconds": 60,
+        "rounding_policy": CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+    }
+    with pytest.raises(ValidationError, match="identity does not match content"):
+        FxValuationPolicyConfiguration.model_validate(
+            {"fx_valuation_policy_id": "sha256:" + "0" * 64, **content}
+        )
+
+
+def test_valuation_policy_identity_is_stable_for_identical_content() -> None:
+    first = _valuation_policy()
+    second = _valuation_policy()
+    assert first.fx_valuation_policy_id == second.fx_valuation_policy_id
+
+
+def test_valuation_policy_identity_changes_with_quote_convention() -> None:
+    first = _valuation_policy(quote_convention=FxQuoteConvention.MID)
+    second = _valuation_policy(quote_convention=FxQuoteConvention.DECLARED_REFERENCE)
+    assert first.fx_valuation_policy_id != second.fx_valuation_policy_id
+
+
+def test_valuation_policy_identity_domain_is_distinct_from_conversion_policy() -> None:
+    """Conversion and valuation policies use different identity types and schema
+    versions; they never share an identity space even with similar fields."""
+    conversion = _policy(quote_convention=FxQuoteConvention.MID)
+    valuation = _valuation_policy(quote_convention=FxQuoteConvention.MID)
+    assert isinstance(conversion.fx_conversion_policy_id, FxConversionPolicyId)
+    assert isinstance(valuation.fx_valuation_policy_id, FxValuationPolicyId)
+    assert str(conversion.fx_conversion_policy_id) != str(valuation.fx_valuation_policy_id)
+
+
+# --- Quote-side-aware selection: conversion ---------------------------------
+
+
+def _conversion_selection_policy(**changes: object) -> FxConversionPolicyConfiguration:
+    """A qualifying policy for select_eligible_fx_observation_for_conversion:
+    V2, the one approved direction, and BID by default. select_conversion_v1_*
+    tests below construct V1 explicitly instead, to prove it's rejected."""
+    changes.setdefault("quote_convention", FxQuoteConvention.BID)
+    changes.setdefault("schema_version", "fx-conversion-policy-v2")
+    changes.setdefault("conversion_direction", FxConversionDirection.SELL_BASE_FOR_TRADING)
+    return _selection_policy(**changes)
+
+
+def test_conversion_selection_rejects_v1_eur_usd_ask_bypass() -> None:
+    """Reproduces Codex's exact confirmed finding: an fx-conversion-policy-v1
+    EUR/USD policy declaring ASK must no longer let a caller select an ASK
+    observation through select_eligible_fx_observation_for_conversion. It
+    must be rejected outright, not silently accepted and not returned as
+    FxConversionQuoteUnavailable (that would mislabel an invalid policy as
+    missing FX data)."""
+    v1_ask_policy = _policy(
+        base_currency="EUR",
+        trading_currency="USD",
+        quote_convention=FxQuoteConvention.ASK,
+    )
+    assert v1_ask_policy.schema_version == "fx-conversion-policy-v1"
+    ask_observation = _eligible_observation(quote_convention=FxQuoteConvention.ASK)
+    with pytest.raises(FxConversionPolicyUnsupportedError, match="fx-conversion-policy-v2"):
+        select_eligible_fx_observation_for_conversion([ask_observation], v1_ask_policy, _T)
+
+
+def test_conversion_selection_rejects_v1_even_with_coincidentally_correct_bid() -> None:
+    """A V1 policy carries no structural guarantee, so it is rejected even
+    when its quote_convention already happens to be BID -- accepting it
+    would still let a caller bypass the enforced V2 rule via an
+    unenforced, independently mutable V1 instance."""
+    v1_bid_policy = _policy(
+        base_currency="EUR",
+        trading_currency="USD",
+        quote_convention=FxQuoteConvention.BID,
+    )
+    bid_observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    with pytest.raises(FxConversionPolicyUnsupportedError):
+        select_eligible_fx_observation_for_conversion([bid_observation], v1_bid_policy, _T)
+
+
+def test_conversion_selection_rejection_is_not_typed_unavailable_evidence() -> None:
+    """The V1 rejection is a raised exception, never a returned
+    FxConversionQuoteUnavailable -- confirming an invalid policy is never
+    mislabeled as a data-availability outcome."""
+    v1_policy = _policy(base_currency="EUR", trading_currency="USD")
+    try:
+        select_eligible_fx_observation_for_conversion([], v1_policy, _T)
+    except FxConversionPolicyUnsupportedError as exc:
+        assert not isinstance(exc, FxConversionQuoteUnavailable)
+    else:
+        pytest.fail("expected FxConversionPolicyUnsupportedError to be raised")
+
+
+def test_conversion_selection_accepts_matching_quote_side() -> None:
+    policy = _conversion_selection_policy(quote_convention=FxQuoteConvention.BID)
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    result = select_eligible_fx_observation_for_conversion([observation], policy, _T)
+    assert result == observation
+
+
+def test_conversion_selection_rejects_mismatched_quote_side() -> None:
+    policy = _conversion_selection_policy(quote_convention=FxQuoteConvention.BID)
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.ASK)
+    result = select_eligible_fx_observation_for_conversion([observation], policy, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.REQUIRED_QUOTE_SIDE_UNAVAILABLE
+
+
+def test_conversion_selection_never_falls_back_to_a_different_side() -> None:
+    """No-silent-fallback proof: an ASK observation is otherwise perfectly
+    causally eligible, but a BID-requiring policy must still fail closed
+    rather than substituting it."""
+    policy = _conversion_selection_policy(quote_convention=FxQuoteConvention.BID)
+    ask_only = _eligible_observation(quote_convention=FxQuoteConvention.ASK)
+    result = select_eligible_fx_observation_for_conversion([ask_only], policy, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+
+
+def test_conversion_selection_distinguishes_no_eligible_from_wrong_side() -> None:
+    policy = _conversion_selection_policy(quote_convention=FxQuoteConvention.BID)
+    future = _eligible_observation(
+        available_at=_T + timedelta(seconds=1), quote_convention=FxQuoteConvention.BID
+    )
+    no_eligible = select_eligible_fx_observation_for_conversion([future], policy, _T)
+    assert isinstance(no_eligible, FxConversionQuoteUnavailable)
+    assert no_eligible.reason is FxQuoteUnavailableReason.NO_ELIGIBLE_OBSERVATION
+
+    wrong_side = _eligible_observation(quote_convention=FxQuoteConvention.MID)
+    side_unavailable = select_eligible_fx_observation_for_conversion([wrong_side], policy, _T)
+    assert isinstance(side_unavailable, FxConversionQuoteUnavailable)
+    assert side_unavailable.reason is FxQuoteUnavailableReason.REQUIRED_QUOTE_SIDE_UNAVAILABLE
+
+
+def test_conversion_selection_prefers_freshest_matching_side_among_mixed_candidates() -> None:
+    policy = _conversion_selection_policy(quote_convention=FxQuoteConvention.BID)
+    older_match = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID,
+        observed_at=_T - timedelta(seconds=40),
+        source_record_id="fx:older-match",
+    )
+    newer_match = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID,
+        observed_at=_T - timedelta(seconds=10),
+        source_record_id="fx:newer-match",
+    )
+    fresher_wrong_side = _eligible_observation(
+        quote_convention=FxQuoteConvention.ASK,
+        observed_at=_T - timedelta(seconds=1),
+        available_at=_T,
+        source_record_id="fx:fresher-wrong-side",
+    )
+    result = select_eligible_fx_observation_for_conversion(
+        [older_match, newer_match, fresher_wrong_side], policy, _T
+    )
+    assert result == newer_match
+
+
+def test_conversion_selection_deterministic_tie_break_among_matching_side() -> None:
+    policy = _conversion_selection_policy(quote_convention=FxQuoteConvention.BID)
+    same_time = _T - timedelta(seconds=30)
+    same_available = _T - timedelta(seconds=10)
+    first = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID,
+        observed_at=same_time,
+        available_at=same_available,
+        source_record_id="fx:aaa",
+    )
+    second = _eligible_observation(
+        quote_convention=FxQuoteConvention.BID,
+        observed_at=same_time,
+        available_at=same_available,
+        source_record_id="fx:zzz",
+    )
+    assert first.fx_observation_id != second.fx_observation_id
+    expected = max([first, second], key=lambda o: str(o.fx_observation_id))
+    result = select_eligible_fx_observation_for_conversion([first, second], policy, _T)
+    assert result == expected
+
+
+def test_conversion_selection_empty_prefix_fails_closed() -> None:
+    policy = _conversion_selection_policy()
+    result = select_eligible_fx_observation_for_conversion([], policy, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.NO_ELIGIBLE_OBSERVATION
+    assert result.evaluated_at == _T
+    assert result.fx_conversion_policy_id == policy.fx_conversion_policy_id
+
+
+# --- Quote-side-aware selection: valuation ----------------------------------
+
+
+def _valuation_selection_policy(**changes: object) -> FxValuationPolicyConfiguration:
+    changes.setdefault("maximum_observation_staleness_seconds", 60)
+    changes.setdefault("quote_convention", FxQuoteConvention.MID)
+    return _valuation_policy(**changes)
+
+
+def test_valuation_selection_accepts_matching_mid() -> None:
+    policy = _valuation_selection_policy(quote_convention=FxQuoteConvention.MID)
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.MID)
+    result = select_eligible_fx_observation_for_valuation([observation], policy, _T)
+    assert result == observation
+
+
+def test_valuation_selection_rejects_mismatched_quote_side() -> None:
+    policy = _valuation_selection_policy(quote_convention=FxQuoteConvention.MID)
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.DECLARED_REFERENCE)
+    result = select_eligible_fx_observation_for_valuation([observation], policy, _T)
+    assert isinstance(result, FxValuationQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.REQUIRED_QUOTE_SIDE_UNAVAILABLE
+
+
+def test_valuation_selection_never_falls_back_to_a_transactional_side() -> None:
+    """No-silent-fallback proof for valuation: a BID observation is otherwise
+    perfectly causally eligible, but a MID-requiring valuation policy must
+    still fail closed as incomplete reporting rather than substituting it."""
+    policy = _valuation_selection_policy(quote_convention=FxQuoteConvention.MID)
+    bid_only = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    result = select_eligible_fx_observation_for_valuation([bid_only], policy, _T)
+    assert isinstance(result, FxValuationQuoteUnavailable)
+
+
+def test_valuation_selection_empty_prefix_fails_closed_as_incomplete_reporting() -> None:
+    policy = _valuation_selection_policy()
+    result = select_eligible_fx_observation_for_valuation([], policy, _T)
+    assert isinstance(result, FxValuationQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.NO_ELIGIBLE_OBSERVATION
+    assert result.evaluated_at == _T
+    assert result.fx_valuation_policy_id == policy.fx_valuation_policy_id
+
+
+def test_valuation_selection_deterministic_tie_break_among_matching_side() -> None:
+    policy = _valuation_selection_policy(quote_convention=FxQuoteConvention.MID)
+    same_time = _T - timedelta(seconds=30)
+    same_available = _T - timedelta(seconds=10)
+    first = _eligible_observation(
+        quote_convention=FxQuoteConvention.MID,
+        observed_at=same_time,
+        available_at=same_available,
+        source_record_id="fx:mmm",
+    )
+    second = _eligible_observation(
+        quote_convention=FxQuoteConvention.MID,
+        observed_at=same_time,
+        available_at=same_available,
+        source_record_id="fx:nnn",
+    )
+    assert first.fx_observation_id != second.fx_observation_id
+    expected = max([first, second], key=lambda o: str(o.fx_observation_id))
+    result = select_eligible_fx_observation_for_valuation([first, second], policy, _T)
+    assert result == expected
+
+
+# --- Identity/contract compatibility with already-committed code -----------
+
+
+def test_existing_conversion_policy_contract_gained_only_the_v2_direction_field() -> None:
+    """FxConversionPolicyConfiguration's shape grew by exactly one additive,
+    optional field (conversion_direction) for V2 support; V1 identity
+    behavior itself is proven unchanged by the literal hash pin above, not
+    by this field-set check."""
+    assert set(FxConversionPolicyConfiguration.model_fields) == {
+        "fx_conversion_policy_id",
+        "schema_version",
+        "policy_name",
+        "model_version",
+        "base_currency",
+        "trading_currency",
+        "quote_convention",
+        "maximum_observation_staleness_seconds",
+        "rounding_policy",
+        "conversion_direction",
+    }
+    policy = _policy()
+    assert policy.conversion_direction is None
+    assert policy.fx_conversion_policy_id == calculate_fx_conversion_policy_id(policy)
+
+
+def test_v1_conversion_policy_identity_is_pinned_to_pre_v2_hash() -> None:
+    """Literal identity pin, independently computed with the pre-V2
+    implementation (uv run python, see the fx-conversion-policy-v2 design
+    report) and hard-coded here rather than derived from any code in this
+    file. This is the strongest available proof that adding V2 support does
+    not move any existing V1 conversion-policy identity."""
+    content: dict[str, object] = {
+        "schema_version": "fx-conversion-policy-v1",
+        "policy_name": "INITIAL_CONVERSION_AND_REPORTING_MARK_V1",
+        "model_version": "test-only-v1",
+        "base_currency": "EUR",
+        "trading_currency": "USD",
+        "quote_convention": FxQuoteConvention.DECLARED_REFERENCE,
+        "maximum_observation_staleness_seconds": 60,
+        "rounding_policy": CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+    }
+    expected_id = "sha256:ce35dd1944098cea11513d1c49c29acacbbdd3303e6f9785dd1ed2ea8ff9147c"
+    assert str(calculate_fx_conversion_policy_id(content)) == expected_id
+    policy = FxConversionPolicyConfiguration.model_validate(
+        {"fx_conversion_policy_id": expected_id, **content}
+    )
+    assert str(policy.fx_conversion_policy_id) == expected_id
+
+
+# --- fx-conversion-policy-v2: required transactional quote side ------------
+
+
+def _conversion_policy_v2(**changes: object) -> FxConversionPolicyConfiguration:
+    content: dict[str, object] = {
+        "schema_version": "fx-conversion-policy-v2",
+        "policy_name": "INITIAL_CONVERSION_AND_REPORTING_MARK_V1",
+        "model_version": "test-only-v1",
+        "base_currency": "EUR",
+        "trading_currency": "USD",
+        "quote_convention": FxQuoteConvention.BID,
+        "maximum_observation_staleness_seconds": 60,
+        "rounding_policy": CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+        "conversion_direction": FxConversionDirection.SELL_BASE_FOR_TRADING,
+    }
+    content.update(changes)
+    return FxConversionPolicyConfiguration.model_validate(
+        {"fx_conversion_policy_id": calculate_fx_conversion_policy_id(content), **content}
+    )
+
+
+def test_v1_conversion_policy_forbids_conversion_direction() -> None:
+    with pytest.raises(ValidationError, match="V1 conversion policy forbids it"):
+        _policy(conversion_direction=FxConversionDirection.SELL_BASE_FOR_TRADING)
+
+
+def test_v2_conversion_policy_requires_conversion_direction() -> None:
+    with pytest.raises(ValidationError, match="requires conversion_direction"):
+        _conversion_policy_v2(conversion_direction=None)
+
+
+def test_v2_conversion_policy_accepts_bid_for_sell_base_for_trading() -> None:
+    policy = _conversion_policy_v2(
+        conversion_direction=FxConversionDirection.SELL_BASE_FOR_TRADING,
+        quote_convention=FxQuoteConvention.BID,
+    )
+    assert policy.quote_convention is FxQuoteConvention.BID
+    assert policy.conversion_direction is FxConversionDirection.SELL_BASE_FOR_TRADING
+
+
+@pytest.mark.parametrize(
+    "wrong_side",
+    [FxQuoteConvention.MID, FxQuoteConvention.ASK, FxQuoteConvention.DECLARED_REFERENCE],
+)
+def test_v2_conversion_policy_rejects_non_bid_for_sell_base_for_trading(
+    wrong_side: FxQuoteConvention,
+) -> None:
+    with pytest.raises(ValidationError, match="requires quote_convention"):
+        _conversion_policy_v2(quote_convention=wrong_side)
+
+
+def test_v2_conversion_policy_rejects_unsupported_direction() -> None:
+    """Fail-closed by construction: no direction other than the one owner-approved
+    enum member can even be parsed."""
+    with pytest.raises(ValidationError):
+        _conversion_policy_v2(conversion_direction="SELL_TRADING_FOR_BASE")
+
+
+def test_v2_conversion_policy_identity_differs_from_equivalent_v1() -> None:
+    v1_content: dict[str, object] = {
+        "schema_version": "fx-conversion-policy-v1",
+        "policy_name": "INITIAL_CONVERSION_AND_REPORTING_MARK_V1",
+        "model_version": "test-only-v1",
+        "base_currency": "EUR",
+        "trading_currency": "USD",
+        "quote_convention": FxQuoteConvention.BID,
+        "maximum_observation_staleness_seconds": 60,
+        "rounding_policy": CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+    }
+    v1_id = calculate_fx_conversion_policy_id(v1_content)
+    v2_policy = _conversion_policy_v2(quote_convention=FxQuoteConvention.BID)
+    assert v1_id != v2_policy.fx_conversion_policy_id
+
+
+def test_v2_conversion_policy_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        _conversion_policy_v2(unexpected_field="not allowed")
+
+
+def test_v2_conversion_policy_rejects_forged_identity() -> None:
+    content: dict[str, object] = {
+        "schema_version": "fx-conversion-policy-v2",
+        "policy_name": "INITIAL_CONVERSION_AND_REPORTING_MARK_V1",
+        "model_version": "test-only-v1",
+        "base_currency": "EUR",
+        "trading_currency": "USD",
+        "quote_convention": FxQuoteConvention.BID,
+        "maximum_observation_staleness_seconds": 60,
+        "rounding_policy": CostRoundingPolicy.ROUND_HALF_EVEN_V1,
+        "conversion_direction": FxConversionDirection.SELL_BASE_FOR_TRADING,
+    }
+    with pytest.raises(ValidationError, match="identity does not match content"):
+        FxConversionPolicyConfiguration.model_validate(
+            {"fx_conversion_policy_id": "sha256:" + "0" * 64, **content}
+        )
+
+
+def test_conversion_selection_unchanged_with_v2_policy_selects_bid() -> None:
+    """A qualifying V2 policy's quote_convention (guaranteed BID by
+    construction) still flows through to select a matching BID observation."""
+    policy = _conversion_policy_v2(quote_convention=FxQuoteConvention.BID)
+    bid_observation = _eligible_observation(quote_convention=FxQuoteConvention.BID)
+    result = select_eligible_fx_observation_for_conversion([bid_observation], policy, _T)
+    assert result == bid_observation
+
+
+def test_conversion_selection_unchanged_with_v2_policy_fails_closed_on_other_side() -> None:
+    """Same policy, failure path: only a non-BID observation is available, so
+    the function must still fail closed rather than accepting it (this is a
+    data-availability outcome, distinct from the policy itself being
+    unsupported)."""
+    policy = _conversion_policy_v2(quote_convention=FxQuoteConvention.BID)
+    ask_only = _eligible_observation(quote_convention=FxQuoteConvention.ASK)
+    result = select_eligible_fx_observation_for_conversion([ask_only], policy, _T)
+    assert isinstance(result, FxConversionQuoteUnavailable)
+    assert result.reason is FxQuoteUnavailableReason.REQUIRED_QUOTE_SIDE_UNAVAILABLE
+    assert result.fx_conversion_policy_id == policy.fx_conversion_policy_id
+
+
+def test_existing_fx_observation_unavailable_contract_is_unmodified() -> None:
+    """This turn must not change FxObservationUnavailable's existing shape."""
+    assert set(FxObservationUnavailable.model_fields) == {
+        "reason",
+        "evaluated_at",
+        "fx_conversion_policy_id",
+    }
+
+
+def test_existing_causal_selection_function_is_behaviorally_unchanged() -> None:
+    """select_eligible_fx_observation still ignores quote_convention entirely,
+    exactly as before this turn's additions."""
+    policy = _selection_policy(quote_convention=FxQuoteConvention.DECLARED_REFERENCE)
+    observation = _eligible_observation(quote_convention=FxQuoteConvention.ASK)
+    result = select_eligible_fx_observation([observation], policy, _T)
+    assert result == observation
+    assert isinstance(result, FxObservationReference)

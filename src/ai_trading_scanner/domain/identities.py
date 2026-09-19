@@ -228,4 +228,8 @@ class FxObservationId(Identifier):
 
 
 class FxConversionPolicyId(Identifier):
-    """Content-derived identity of a versioned FX conversion/valuation policy."""
+    """Content-derived identity of a versioned, executable FX conversion policy."""
+
+
+class FxValuationPolicyId(Identifier):
+    """Content-derived identity of a versioned, reporting-only FX valuation policy."""
